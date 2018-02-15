@@ -6,13 +6,11 @@ from torch import nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from models.shared_base import *
 from utils import get_logger, get_variable, keydefaultdict
 
 logger = get_logger()
 
-
-def size(p):
-    return np.prod(p.size())
 
 def embedded_dropout(embed, words, dropout=0.1, scale=None):
     # code from https://github.com/salesforce/awd-lstm-lm/blob/master/embed_regularize.py
@@ -36,6 +34,7 @@ def embedded_dropout(embed, words, dropout=0.1, scale=None):
     )
     return X
 
+
 class LockedDropout(nn.Module):
     # code from https://github.com/salesforce/awd-lstm-lm/blob/master/locked_dropout.py
     def __init__(self):
@@ -49,9 +48,11 @@ class LockedDropout(nn.Module):
         mask = mask.expand_as(x)
         return mask * x
 
-class RNN(nn.Module):
+
+class RNN(SharedModel):
     def __init__(self, args, corpus):
         super(RNN, self).__init__()
+
         self.args = args
         self.corpus = corpus
 
@@ -90,7 +91,7 @@ class RNN(nn.Module):
 
         logger.info(f"# of parameters: {format(self.num_parameters, ',d')}")
 
-    def forward(self, inputs, hidden, dag):
+    def forward(self, inputs, dag, hidden=None):
         time_steps = inputs.size(0)
         batch_size = inputs.size(1)
 
@@ -178,10 +179,6 @@ class RNN(nn.Module):
             f = F.sigmoid
         return f
 
-    @property
-    def num_parameters(self):
-        return sum([size(param) for param in self.parameters()])
-
     def get_num_cell_parameters(self, dag):
         num = 0
 
@@ -220,58 +217,3 @@ class RNN(nn.Module):
         for param in self.parameters():
             param.data.uniform_(-init_range, init_range)
         self.decoder.bias.data.fill_(0)
-
-
-def conv3x3(in_planes, out_planes, stride=1):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=1, bias=False)
-
-def conv5x5(in_planes, out_planes, stride=1):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=5, stride=stride,
-                     padding=1, bias=False)
-
-def conv(kernel, planes, kernel):
-    if kernel == 3:
-        _conv = conv3x3
-    elif kernel == 5:
-        _conv = conv5x5
-    else:
-        raise NotImplemented(f"Unkown kernel size: {kernel}")
-
-    return nn.Sequential(
-            nn.ReLU(inplace=True),
-            _conv(planes, planes),
-            nn.BatchNorm2d(planes),
-    )
-
-
-class CNN(nn.Module):
-    def __init__(self, args, images):
-        super(CNN, self).__init__()
-        self.args = args
-        self.images = images
-
-        self.w_c, self.w_h = defaultdict(dict), defaultdict(dict)
-        self.reset_parameters()
-
-        self.conv = defaultdict(dict)
-        for idx in range(args.num_blocks):
-            for jdx in range(idx+1, args.num_blocks):
-                self.conv[idx][jdx] = conv()
-
-        raise NotImplemented("In progress...")
-
-    def reset_parameters(self):
-        init_range = self.args.shared_init_range
-
-    def get_f(self, name):
-        name = name.lower()
-        if name == 'relu':
-            f = F.relu
-        elif name == 'tanh':
-            f = F.tanh
-        elif name == 'identity':
-            f = lambda x: x
-        elif name == 'sigmoid':
-            f = F.sigmoid
-        return f

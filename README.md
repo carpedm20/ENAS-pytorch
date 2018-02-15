@@ -29,7 +29,7 @@ To train **ENAS** to discover a recurrent cell for RNN:
 
 To train **ENAS** to discover CNN architecture (in progress):
 
-    python main.py --network_type cnn --dataset cifar --controller_optim momentum --controller_lr cosine \
+    python main.py --network_type cnn --dataset cifar --controller_optim momentum --controller_lr_cosine=True \
                    --controller_lr_max 0.05 --controller_lr_min 0.0001 --entropy_coeff 0.1
 
 or you can use your own dataset by placing images like:
