@@ -94,7 +94,9 @@ class Trainer(object):
             if self.epoch % self.args.save_epoch == 0:
                 if self.epoch > 0:
                     best_dag = self.derive()
-                    loss, ppl = self.test(self.test_data, best_dag, "test_best")
+                    loss, ppl = self.test(
+                            self.test_data, best_dag, "test_best",
+                            max_num=self.batch_size*100)
                 self.save_model()
 
             if self.epoch >= self.args.shared_decay_after:
@@ -274,16 +276,18 @@ class Trainer(object):
 
             valid_idx = (valid_idx + self.max_length) % (self.valid_data.size(0) - 1)
 
-    def test(self, source, dag, name, batch_size=1):
+    def test(self, source, dag, name, batch_size=1, max_num=None):
         self.shared.eval()
         self.controller.eval()
+
+        data = source[:max_num]
 
         total_loss = 0
         hidden = self.shared.init_hidden(batch_size)
 
-        pbar = trange(0, source.size(0) - 1, self.max_length, desc="test")
+        pbar = trange(0, data.size(0) - 1, self.max_length, desc="test")
         for count, idx in enumerate(pbar):
-            data, targets = self.get_batch(source, idx, evaluation=True)
+            data, targets = self.get_batch(data, idx, evaluation=True)
             output, hidden = self.shared(data, hidden, dag)
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(data) * self.ce(output_flat, targets).data
@@ -292,7 +296,7 @@ class Trainer(object):
             ppl = math.exp(total_loss[0] / (count+1) / self.max_length)
             pbar.set_description(f"test| ppl: {ppl:8.2f}")
 
-        test_loss = total_loss[0] / len(source)
+        test_loss = total_loss[0] / len(data)
         ppl = math.exp(test_loss)
 
         self.tb.scalar_summary(f"test/{name}_loss", test_loss, self.epoch)
