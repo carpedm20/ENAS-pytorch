@@ -264,6 +264,7 @@ class Trainer(object):
                     self.tb.image_summary("controller/sample", paths, self.controller_step)
 
                 reward_history, adv_history, entropy_history = [], [], []
+                total_loss = 0
 
             self.controller_step += 1
 

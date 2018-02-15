@@ -78,8 +78,6 @@ You can see the details of training (e.g. `reward`, `entropy`, `loss`) with:
 
     tensorboard --logdir=logs --port=6006
 
-![training](assets/training.png)
-
 
 ### 2. Discovering Convolutional Neural Networks
 
