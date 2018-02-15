@@ -1,0 +1,5 @@
+tqdm
+scipy
+imageio
+pygraphviz
+tensorboardX
