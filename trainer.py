@@ -229,6 +229,10 @@ class Trainer(object):
             # update
             self.controller_optim.zero_grad()
             loss.backward()
+
+            if self.args.controller_grad_clip > 0:
+                t.nn.utils.clip_grad_norm(
+                        model.parameters(), self.args.controller_grad_clip)
             self.controller_optim.step()
 
             total_loss += loss.data
@@ -384,7 +388,7 @@ class Trainer(object):
             logger.info(f"[!] No checkpoint found in {self.args.model_dir}...")
             return
 
-        self.start_epoch = max(epochs)
+        self.epoch = self.start_epoch = max(epochs)
         self.shared_step = max(shared_steps)
         self.controller_step = max(controller_steps)
 
