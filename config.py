@@ -58,7 +58,7 @@ learn_arg.add_argument('--max_epoch', type=int, default=150)
 learn_arg.add_argument('--reward_c', type=int, default=80,
                        help="WE DON'T KNOW WHAT THIS VALUE SHOULD BE") # TODO
 learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.9) # TODO
-learn_arg.add_argument('--discount', type=float, default=0.95) # TODO
+learn_arg.add_argument('--discount', type=float, default=1) # TODO
 learn_arg.add_argument('--controller_max_step', type=int, default=2000,
                        help='step for controller parameters')
 learn_arg.add_argument('--controller_optim', type=str, default='adam')
