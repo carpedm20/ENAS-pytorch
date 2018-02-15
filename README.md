@@ -74,6 +74,10 @@ The RNN cell **ENAS** discovered for `Penn Treebank` and `WikiText-2` dataset:
 
 <img src="assets/ptb.gif" alt="ptb" width="45%"> <img src="assets/wikitext.gif" alt="wikitext" width="45%">
 
+Best discovered ENAS cell for `Penn Treebank` at epoch 27:
+
+<img src="assets/best_rnn_epoch27.png" alt="ptb" width="30%">
+
 You can see the details of training (e.g. `reward`, `entropy`, `loss`) with:
 
     tensorboard --logdir=logs --port=6006
