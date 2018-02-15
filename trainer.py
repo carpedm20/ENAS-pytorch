@@ -84,9 +84,10 @@ class Trainer(object):
 
         hidden = self.shared.init_hidden(self.args.batch_size)
 
+        hidden = self.train_shared(hidden)
+
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters ω of the child models
-            hidden = self.train_shared(hidden)
 
             # 2. Training the controller parameters θ
             self.train_controller()
