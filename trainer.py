@@ -82,11 +82,9 @@ class Trainer(object):
                 self.controller.parameters(),
                 lr=self.args.controller_lr)
 
-        hidden = self.shared.init_hidden(self.args.batch_size)
-
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters ω of the child models
-            hidden = self.train_shared(hidden)
+            self.train_shared()
 
             # 2. Training the controller parameters θ
             self.train_controller()
@@ -120,13 +118,15 @@ class Trainer(object):
         else:
             return loss
 
-    def train_shared(self, hidden):
+    def train_shared(self):
         total_loss = 0
 
         model = self.shared
         model.train()
 
         step, train_idx = 0, 0
+        hidden = self.shared.init_hidden(self.args.batch_size)
+
         pbar = tqdm(total=self.train_data.size(0), desc="train_shared")
 
         while train_idx < self.train_data.size(0) - 1 - 1:
