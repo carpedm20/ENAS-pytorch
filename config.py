@@ -55,10 +55,10 @@ learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
 
 # Controller
-learn_arg.add_argument('--reward_c', type=int, default=80,
+learn_arg.add_argument('--reward_c', type=int, default=200,
                        help="WE DON'T KNOW WHAT THIS VALUE SHOULD BE") # TODO
-learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.9) # TODO
-learn_arg.add_argument('--discount', type=float, default=1) # TODO
+learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.99) # TODO
+learn_arg.add_argument('--discount', type=float, default=1.0) # TODO
 learn_arg.add_argument('--controller_max_step', type=int, default=2000,
                        help='step for controller parameters')
 learn_arg.add_argument('--controller_optim', type=str, default='adam')
