@@ -203,33 +203,32 @@ class Trainer(object):
             dags, log_probs, entropies = self.controller.sample(with_details=True)
 
             # calculate reward
-            R = self.get_reward(dags, valid_idx)
-            R += self.args.entropy_coeff * entropy
+            rewards = self.get_reward(dags, valid_idx) + \
+                    self.args.entropy_coeff * np.array(entropies)
 
-            reward_history.append(R)
+            reward_history.extend(rewards)
             entropy_history.extend(entropies)
 
             # moving average baseline
             if baseline is None:
-                baseline = R
+                baseline = rewards
             else:
                 decay = self.args.ema_baseline_decay
-                baseline = decay * baseline + (1 - decay) * R
+                baseline = decay * baseline + (1 - decay) * rewards
 
-            adv = R - baseline
-            adv_history.append(adv)
-            pbar.set_description(f"train_controller| R: {R:8.6f} | R-b: {adv:8.6f}")
+            adv = rewards - baseline
+            adv_history.extend(adv)
+            pbar.set_description(
+                    f"train_controller| R: {rewards.mean():8.6f} | R-b: {adv.mean():8.6f}")
 
-            rewards = [0] * (2*(self.args.num_blocks-1)) + [adv]
             # discount
-            if self.args.discount == 1:
-                rewards = [adv] * len(log_probs)
-            elif self.args.discount > 0:
+            if 1 > self.args.discount > 0:
                 rewards = discount(rewards, self.args.discount)
             #rewards = (rewards - rewards.mean()) / (rewards.std() + np.finfo(np.float32).eps)
 
             # policy loss
             loss = 0
+            rewards = t.Tensor(rewards)
             for log_prob, reward, entropy in zip(log_probs, rewards, entropies):
                 loss = loss - log_prob * reward
                 # TODO: entropy seems not used as a regularizer
