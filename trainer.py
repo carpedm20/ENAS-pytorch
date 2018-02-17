@@ -177,7 +177,11 @@ class Trainer(object):
         valid_loss = self.get_loss(inputs, targets, None, dag)
 
         valid_ppl = math.exp(valid_loss.data[0])
+
+        # TODO: we don't know reward_c
         R = self.args.reward_c / valid_ppl
+        # TODO: but we do know reward_c=80 in the previous paper
+        #R = self.args.reward_c / valid_ppl ** 2
 
         return R
 
@@ -228,6 +232,7 @@ class Trainer(object):
             loss = 0
             for log_prob, reward, entropy in zip(log_probs, rewards, entropies):
                 loss = loss - log_prob * reward
+                # TODO: entropy seems not used as a regularizer
                 #loss = loss - log_prob * reward - self.args.entropy_coeff * entropy
 
             # update
