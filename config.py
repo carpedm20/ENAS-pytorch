@@ -55,7 +55,7 @@ learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
 
 # Controller
-learn_arg.add_argument('--reward_c', type=int, default=200,
+learn_arg.add_argument('--reward_c', type=int, default=80,
                        help="WE DON'T KNOW WHAT THIS VALUE SHOULD BE") # TODO
 learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.99) # TODO
 learn_arg.add_argument('--discount', type=float, default=1.0) # TODO
@@ -94,8 +94,8 @@ learn_arg.add_argument('--derive_num_sample', type=int, default=100)
 misc_arg = add_argument_group('Misc')
 misc_arg.add_argument('--load_path', type=str, default='')
 misc_arg.add_argument('--log_step', type=int, default=50)
-misc_arg.add_argument('--save_epoch', type=int, default=1)
-misc_arg.add_argument('--max_save_num', type=int, default=5)
+misc_arg.add_argument('--save_epoch', type=int, default=2)
+misc_arg.add_argument('--max_save_num', type=int, default=4)
 misc_arg.add_argument('--log_level', type=str, default='INFO', choices=['INFO', 'DEBUG', 'WARN'])
 misc_arg.add_argument('--log_dir', type=str, default='logs')
 misc_arg.add_argument('--data_dir', type=str, default='data')

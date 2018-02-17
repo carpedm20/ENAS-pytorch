@@ -169,7 +169,7 @@ class Trainer(object):
             train_idx += self.max_length
             pbar.update(self.max_length)
 
-    def get_reward(self, dag, valid_idx=None):
+    def get_reward(self, dag, entropies, valid_idx=None):
         if valid_idx:
             valid_idx = 0
 
@@ -183,7 +183,7 @@ class Trainer(object):
         # TODO: but we do know reward_c=80 in the previous paper
         #R = self.args.reward_c / valid_ppl ** 2
 
-        return R
+        return R + self.args.entropy_coeff * np.array(entropies)
 
     def train_controller(self):
         total_loss = 0
@@ -203,8 +203,7 @@ class Trainer(object):
             dags, log_probs, entropies = self.controller.sample(with_details=True)
 
             # calculate reward
-            rewards = self.get_reward(dags, valid_idx) + \
-                    self.args.entropy_coeff * np.array(entropies)
+            rewards = self.get_reward(dags, entropies, valid_idx)
 
             reward_history.extend(rewards)
             entropy_history.extend(entropies)
@@ -314,14 +313,14 @@ class Trainer(object):
         if sample_num is None:
             sample_num = self.args.derive_num_sample
 
-        dags = self.controller.sample(sample_num)
+        dags, log_probs, entropies = self.controller.sample(with_details=True)
 
         max_R, best_dag = 0, None
         pbar = tqdm(dags, desc="derive")
         for dag in pbar:
-            R = self.get_reward(dag, valid_idx)
-            if R > max_R:
-                max_R = R
+            R = self.get_reward(dag, entropies, valid_idx)
+            if R.max() > max_R:
+                max_R = R.max()
                 best_dag = dag
             pbar.set_description(f"derive| max_R: {max_R:8.6f}")
 
