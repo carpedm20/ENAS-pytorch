@@ -200,6 +200,7 @@ class Trainer(object):
 
             # calculate reward
             R = self.get_reward(dags, valid_idx)
+            R += self.args.entropy_coeff * entropy
 
             reward_history.append(R)
             entropy_history.extend(entropies)
@@ -226,7 +227,8 @@ class Trainer(object):
             # policy loss
             loss = 0
             for log_prob, reward, entropy in zip(log_probs, rewards, entropies):
-                loss = loss - log_prob * reward - self.args.entropy_coeff * entropy
+                loss = loss - log_prob * reward
+                #loss = loss - log_prob * reward - self.args.entropy_coeff * entropy
 
             # update
             self.controller_optim.zero_grad()

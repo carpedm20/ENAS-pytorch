@@ -68,7 +68,8 @@ class Controller(nn.Module):
 
         # exploration
         if self.args.mode == 'train':
-            logits = self.args.tanh_c * F.tanh(logits)
+            #logits = self.args.tanh_c * F.tanh(logits)
+            logits = self.args.tanh_c * F.tanh(logits) / self.args.softmax_temperature
         elif self.args.mode == 'derive':
             logits = logits / self.args.softmax_temperature
 
