@@ -227,12 +227,12 @@ class Trainer(object):
             #rewards = (rewards - rewards.mean()) / (rewards.std() + np.finfo(np.float32).eps)
 
             # policy loss
-            loss = 0
-            rewards = t.Tensor(rewards)
-            for log_prob, reward, entropy in zip(log_probs, rewards, entropies):
-                loss = loss - log_prob * reward
-                # TODO: entropy seems not used as a regularizer
-                #loss = loss - log_prob * reward - self.args.entropy_coeff * entropy
+            rewards = get_variable(t.Tensor(rewards), True, requires_grad=False)
+            loss = - (t.cat(log_probs) * rewards).sum() # or mean()
+
+            #loss = - log_probs * rewards
+            # TODO: entropy seems not used as a regularizer
+            #loss = loss - log_prob * reward - self.args.entropy_coeff * entropy
 
             # update
             self.controller_optim.zero_grad()
@@ -243,10 +243,10 @@ class Trainer(object):
                         model.parameters(), self.args.controller_grad_clip)
             self.controller_optim.step()
 
-            total_loss += loss.data
+            total_loss += loss.data[0]
 
             if step % self.args.log_step == 0 and step > 0:
-                cur_loss = total_loss[0][0] / self.args.log_step
+                cur_loss = total_loss / self.args.log_step
 
                 avg_reward = np.mean(reward_history)
                 avg_entropy = np.mean(entropy_history)
