@@ -11,6 +11,8 @@ from utils import get_logger, get_variable, keydefaultdict
 
 logger = get_logger()
 
+def isnan(tensor):
+    return np.isnan(tensor.cpu().data.numpy()).sum() > 0
 
 def embedded_dropout(embed, words, dropout=0.1, scale=None):
     # code from https://github.com/salesforce/awd-lstm-lm/blob/master/embed_regularize.py
@@ -91,20 +93,21 @@ class RNN(SharedModel):
 
         logger.info(f"# of parameters: {format(self.num_parameters, ',d')}")
 
-    def forward(self, inputs, dag, hidden=None):
+    def forward(self, inputs, dag, hidden=None, is_train=True):
         time_steps = inputs.size(0)
         batch_size = inputs.size(1)
 
         if hidden is None:
             hidden = self.static_init_hidden[batch_size]
 
+        is_train = is_train and self.args.mode in ['train']
+
         embed = embedded_dropout(
                 self.encoder, inputs,
-                dropout=self.args.shared_dropoute \
-                        if self.args.mode in ['train', 'derive'] else 0)
+                dropout=self.args.shared_dropoute if is_train else 0)
 
         if self.args.shared_dropouti > 0:
-            embed = self.lockdrop(embed, self.args.shared_dropouti)
+            embed = self.lockdrop(embed, self.args.shared_dropouti if is_train else 0)
 
         logits = []
         for step in range(time_steps):
@@ -114,7 +117,7 @@ class RNN(SharedModel):
         
         output = t.stack(logits)
         if self.args.shared_dropout > 0:
-            output = self.lockdrop(output, self.args.shared_dropout)
+            output = self.lockdrop(output, self.args.shared_dropout if is_train else 0)
 
         decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
         return decoded.view(output.size(0), output.size(1), decoded.size(1)), hidden
@@ -150,6 +153,8 @@ class RNN(SharedModel):
                 f[next_id] = self.get_f(next_node.name)
                 c[next_id] = F.sigmoid(w_c(h[node_id]))
                 h[next_id] = c[next_id] * f[next_id](w_h(h[node_id])) + (1 - c[0]) * h[node_id]
+
+                #if isnan(h[next_id]): import ipdb; ipdb.set_trace() 
 
                 q.append(next_id)
 

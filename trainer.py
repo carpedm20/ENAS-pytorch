@@ -227,7 +227,7 @@ class Trainer(object):
 
             # policy loss
             rewards = get_variable(t.Tensor(rewards), True, requires_grad=False)
-            loss = - (t.cat(log_probs) * rewards).sum() # or mean()
+            loss = - (t.cat(log_probs) * rewards).mean() # or mean()
 
             #loss = - log_probs * rewards
             # TODO: entropy seems not used as a regularizer
@@ -293,11 +293,11 @@ class Trainer(object):
         pbar = trange(0, data.size(0) - 1, self.max_length, desc="test")
         for count, idx in enumerate(pbar):
             inputs, targets = self.get_batch(data, idx, evaluation=True)
-            output, hidden = self.shared(inputs, dag, hidden=hidden)
+            output, hidden = self.shared(inputs, dag, 
+                    hidden=None if self.args.mode == 'train' else hidden, is_train=False)
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
             hidden = detach(hidden)
-
             ppl = math.exp(total_loss[0] / (count+1) / self.max_length)
             pbar.set_description(f"test| ppl: {ppl:8.2f}")
 
@@ -313,7 +313,7 @@ class Trainer(object):
         if sample_num is None:
             sample_num = self.args.derive_num_sample
 
-        dags, log_probs, entropies = self.controller.sample(with_details=True)
+        dags, log_probs, entropies = self.controller.sample(sample_num, with_details=True)
 
         max_R, best_dag = 0, None
         pbar = tqdm(dags, desc="derive")

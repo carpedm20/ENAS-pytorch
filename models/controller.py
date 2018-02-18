@@ -102,7 +102,7 @@ class Controller(nn.Module):
 
             action = probs.multinomial().data
             selected_log_prob = log_prob.gather(1, get_variable(action, requires_grad=False))
-            log_probs.append(selected_log_prob[0])
+            log_probs.append(selected_log_prob[:,0])
 
             inputs = get_variable(action[:,0] + sum(self.num_tokens[:mode]), requires_grad=False)
 
