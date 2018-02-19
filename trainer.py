@@ -227,7 +227,7 @@ class Trainer(object):
 
             # policy loss
             rewards = get_variable(t.Tensor(rewards), True, requires_grad=False)
-            loss = - (t.cat(log_probs) * rewards).mean() # or mean()
+            loss = - (t.cat(log_probs) * rewards).sum() # or mean()
 
             #loss = - log_probs * rewards
             # TODO: entropy seems not used as a regularizer

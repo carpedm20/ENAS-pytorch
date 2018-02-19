@@ -152,7 +152,7 @@ class RNN(SharedModel):
 
                 f[next_id] = self.get_f(next_node.name)
                 c[next_id] = F.sigmoid(w_c(h[node_id]))
-                h[next_id] = c[next_id] * f[next_id](w_h(h[node_id])) + (1 - c[0]) * h[node_id]
+                h[next_id] = c[next_id] * f[next_id](w_h(h[node_id])) + (1 - c[next_id]) * h[node_id]
 
                 #if isnan(h[next_id]): import ipdb; ipdb.set_trace() 
 

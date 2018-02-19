@@ -70,7 +70,7 @@ class Controller(nn.Module):
         if self.args.mode == 'train':
             # TODO: not sure whether they use temperatuer in training as well
             logits = self.args.tanh_c * F.tanh(logits)
-            #logits = self.args.tanh_c * F.tanh(logits) / self.args.softmax_temperature
+            #logits = self.args.tanh_c * F.tanh(logits / self.args.softmax_temperature)
         elif self.args.mode == 'derive':
             logits = logits / self.args.softmax_temperature
 
