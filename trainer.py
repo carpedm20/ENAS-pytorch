@@ -205,6 +205,10 @@ class Trainer(object):
             # calculate reward
             rewards = self.get_reward(dags, entropies, valid_idx)
 
+            # discount
+            if 1 > self.args.discount > 0:
+                rewards = discount(rewards, self.args.discount)
+
             reward_history.extend(rewards)
             entropy_history.extend(entropies)
 
@@ -220,18 +224,13 @@ class Trainer(object):
             pbar.set_description(
                     f"train_controller| R: {rewards.mean():8.6f} | R-b: {adv.mean():8.6f}")
 
-            # discount
-            if 1 > self.args.discount > 0:
-                rewards = discount(rewards, self.args.discount)
-            #rewards = (rewards - rewards.mean()) / (rewards.std() + np.finfo(np.float32).eps)
-
             # policy loss
-            rewards = get_variable(t.Tensor(rewards), True, requires_grad=False)
-            loss = - (t.cat(log_probs) * rewards).sum() # or mean()
+            adv = get_variable(t.Tensor(adv), True, requires_grad=False)
+            loss = - (t.cat(log_probs) * adv).sum() # or mean()
 
-            #loss = - log_probs * rewards
+            #loss = - log_probs * adv
             # TODO: entropy seems not used as a regularizer
-            #loss = loss - log_prob * reward - self.args.entropy_coeff * entropy
+            #loss = loss - log_prob * adv - self.args.entropy_coeff * entropy
 
             # update
             self.controller_optim.zero_grad()
