@@ -170,6 +170,9 @@ class Trainer(object):
             pbar.update(self.max_length)
 
     def get_reward(self, dag, entropies, valid_idx=None):
+        if type(entropies) is not np.ndarray:
+            entropies = entropies.data.cpu().numpy()
+
         if valid_idx:
             valid_idx = 0
 
@@ -183,7 +186,13 @@ class Trainer(object):
         # TODO: but we do know reward_c=80 in the previous paper
         #R = self.args.reward_c / valid_ppl ** 2
 
-        return R + self.args.entropy_coeff * np.array(entropies)
+        if self.args.entropy_mode == 'reward':
+            rewards = R + self.args.entropy_coeff * entropies
+        elif self.args.entropy_mode == 'regularizer':
+            rewards = R * np.ones_like(entropies)
+        else:
+            raise NotImplemented(f"Unkown entropy mode: {self.args.entropy_mode}")
+        return rewards
 
     def train_controller(self):
         total_loss = 0
@@ -203,14 +212,15 @@ class Trainer(object):
             dags, log_probs, entropies = self.controller.sample(with_details=True)
 
             # calculate reward
-            rewards = self.get_reward(dags, entropies, valid_idx)
+            np_entropies = entropies.data.cpu().numpy()
+            rewards = self.get_reward(dags, np_entropies, valid_idx)
 
             # discount
             if 1 > self.args.discount > 0:
                 rewards = discount(rewards, self.args.discount)
 
             reward_history.extend(rewards)
-            entropy_history.extend(entropies)
+            entropy_history.extend(np_entropies)
 
             # moving average baseline
             if baseline is None:
@@ -225,12 +235,12 @@ class Trainer(object):
                     f"train_controller| R: {rewards.mean():8.6f} | R-b: {adv.mean():8.6f}")
 
             # policy loss
-            adv = get_variable(t.Tensor(adv), True, requires_grad=False)
-            loss = - (t.cat(log_probs) * adv).sum() # or mean()
+            adv = get_variable(adv, self.cuda, requires_grad=False)
+            loss = - log_probs * adv
+            if self.args.entropy_mode == 'regularizer':
+                loss -= self.args.entropy_coeff * entropies
 
-            #loss = - log_probs * adv
-            # TODO: entropy seems not used as a regularizer
-            #loss = loss - log_prob * adv - self.args.entropy_coeff * entropy
+            loss = loss.sum() # or loss.mean()
 
             # update
             self.controller_optim.zero_grad()

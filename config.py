@@ -53,6 +53,8 @@ learn_arg.add_argument('--mode', type=str, default='train',
 learn_arg.add_argument('--batch_size', type=int, default=64)
 learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
+learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['reward', 'regularizer'])
+
 
 # Controller
 learn_arg.add_argument('--reward_c', type=int, default=80,
@@ -108,6 +110,8 @@ def get_args():
     args, unparsed = parser.parse_known_args()
     if args.num_gpu > 0:
         setattr(args, 'cuda', True)
+    else:
+        setattr(args, 'cuda', False)
     if len(unparsed) > 1:
         logger.info(f"Unparsed args: {unparsed}")
     return args, unparsed

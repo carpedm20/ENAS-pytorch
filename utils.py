@@ -7,8 +7,10 @@ import numpy as np
 import pygraphviz as pgv
 from tqdm import tqdm, trange
 from datetime import datetime
-from torch.autograd import Variable
 from collections import defaultdict
+
+import torch as t
+from torch.autograd import Variable
 
 from PIL import Image
 from PIL import ImageFont
@@ -128,6 +130,8 @@ def detach(h):
         return tuple(detach(v) for v in h)
 
 def get_variable(inputs, cuda=False, **kwargs):
+    if type(inputs) in [list, np.ndarray]:
+        inputs = t.Tensor(inputs)
     if cuda:
         out = Variable(inputs.cuda(), **kwargs)
     else:

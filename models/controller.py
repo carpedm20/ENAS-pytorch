@@ -97,8 +97,8 @@ class Controller(nn.Module):
 
             probs = F.softmax(logits)
             log_prob = F.log_softmax(logits)
-            entropy = -(log_prob * probs).sum(1, keepdim=True)
-            entropies.append(entropy.data[0][0])
+            entropy = -(log_prob * probs).sum(1, keepdim=False)
+            entropies.append(entropy)
 
             action = probs.multinomial().data
             selected_log_prob = log_prob.gather(1, get_variable(action, requires_grad=False))
@@ -141,7 +141,7 @@ class Controller(nn.Module):
                 draw_network(dag, os.path.join(save_dir, f"graph{idx}.png"))
 
         if with_details:
-            return dags, log_probs, entropies
+            return dags, t.cat(log_probs), t.cat(entropies)
         else:
             return dags
 
