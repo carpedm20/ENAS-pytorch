@@ -82,6 +82,10 @@ class Trainer(object):
                 self.controller.parameters(),
                 lr=self.args.controller_lr)
 
+        if self.args.shared_initial_step > 0:
+            self.train_shared(self.args.shared_initial_step)
+            self.train_controller()
+
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters ω of the child models
             self.train_shared()
@@ -118,7 +122,7 @@ class Trainer(object):
         else:
             return loss
 
-    def train_shared(self):
+    def train_shared(self, max_step=None):
         total_loss = 0
 
         model = self.shared
@@ -129,14 +133,21 @@ class Trainer(object):
 
         pbar = tqdm(total=self.train_data.size(0), desc="train_shared")
 
+        if max_step is None:
+            max_step = self.args.shared_max_step
+        else:
+            max_step = min(self.args.shared_max_step, max_step)
+
         while train_idx < self.train_data.size(0) - 1 - 1:
-            if step > self.args.shared_max_step:
+            if step > max_step:
                 break
 
             dags = self.controller.sample(self.args.shared_num_sample)
             inputs, targets = self.get_batch(self.train_data, train_idx, self.max_length)
 
             loss = self.get_loss(inputs, targets, hidden, dags)
+            #loss, hidden = self.get_loss(inputs, targets, hidden, dags, with_hidden=True)
+            #hidden = detach(hidden)
 
             # update
             self.shared_optim.zero_grad()
@@ -182,9 +193,11 @@ class Trainer(object):
         valid_ppl = math.exp(valid_loss.data[0])
 
         # TODO: we don't know reward_c
-        R = self.args.reward_c / valid_ppl
-        # TODO: but we do know reward_c=80 in the previous paper
-        #R = self.args.reward_c / valid_ppl ** 2
+        if self.args.ppl_square:
+            # TODO: but we do know reward_c=80 in the previous paper
+            R = self.args.reward_c / valid_ppl ** 2
+        else:
+            R = self.args.reward_c / valid_ppl
 
         if self.args.entropy_mode == 'reward':
             rewards = R + self.args.entropy_coeff * entropies
@@ -202,7 +215,7 @@ class Trainer(object):
 
         pbar = trange(self.args.controller_max_step, desc="train_controller")
 
-        baseline = None
+        baseline, avg_reward_base = None, None
         reward_history, adv_history, entropy_history = [], [], []
 
         valid_idx = 0
@@ -231,16 +244,16 @@ class Trainer(object):
 
             adv = rewards - baseline
             adv_history.extend(adv)
-            pbar.set_description(
-                    f"train_controller| R: {rewards.mean():8.6f} | R-b: {adv.mean():8.6f}")
 
             # policy loss
-            adv = get_variable(adv, self.cuda, requires_grad=False)
-            loss = - log_probs * adv
+            loss = - log_probs * get_variable(adv, self.cuda, requires_grad=False)
             if self.args.entropy_mode == 'regularizer':
                 loss -= self.args.entropy_coeff * entropies
 
             loss = loss.sum() # or loss.mean()
+            pbar.set_description(
+                    f"train_controller| R: {rewards.mean():8.6f} | R-b: {adv.mean():8.6f} "
+                    f"| loss: {loss.cpu().data[0]:8.6f}")
 
             # update
             self.controller_optim.zero_grad()
@@ -260,6 +273,9 @@ class Trainer(object):
                 avg_entropy = np.mean(entropy_history)
                 avg_adv = np.mean(adv_history)
 
+                if avg_reward_base is None:
+                    avg_reward_base = avg_reward
+
                 logger.info(f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
                             f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
                             f'| loss {cur_loss:.5f}')
@@ -269,6 +285,8 @@ class Trainer(object):
                     self.tb.scalar_summary("controller/loss", cur_loss, self.controller_step)
                     self.tb.scalar_summary(
                             "controller/reward", avg_reward, self.controller_step)
+                    self.tb.scalar_summary(
+                            "controller/reward-B_per_epoch", avg_reward - avg_reward_base, self.controller_step)
                     self.tb.scalar_summary(
                             "controller/entropy", avg_entropy, self.controller_step)
                     self.tb.scalar_summary(
@@ -302,8 +320,7 @@ class Trainer(object):
         pbar = trange(0, data.size(0) - 1, self.max_length, desc="test")
         for count, idx in enumerate(pbar):
             inputs, targets = self.get_batch(data, idx, evaluation=True)
-            output, hidden = self.shared(inputs, dag, 
-                    hidden=None if self.args.mode == 'train' else hidden, is_train=False)
+            output, hidden = self.shared(inputs, dag, hidden=hidden, is_train=False)
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
             hidden = detach(hidden)

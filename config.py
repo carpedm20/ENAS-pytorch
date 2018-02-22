@@ -28,7 +28,7 @@ net_arg.add_argument('--controller_hid', type=int, default=100)
 net_arg.add_argument('--shared_dropout', type=float, default=0.4) # TODO
 net_arg.add_argument('--shared_dropoute', type=float, default=0.1) # TODO
 net_arg.add_argument('--shared_dropouti', type=float, default=0.65) # TODO
-net_arg.add_argument('--shared_embed', type=int, default=1000)
+net_arg.add_argument('--shared_embed', type=int, default=1000) # TODO: 200, 500, 1000
 net_arg.add_argument('--shared_hid', type=int, default=1000)
 net_arg.add_argument('--shared_rnn_max_length', type=int, default=35)
 net_arg.add_argument('--shared_rnn_activations', type=eval,
@@ -57,9 +57,10 @@ learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['r
 
 
 # Controller
+learn_arg.add_argument('--ppl_square', type=str2bool, default=False)
 learn_arg.add_argument('--reward_c', type=int, default=80,
                        help="WE DON'T KNOW WHAT THIS VALUE SHOULD BE") # TODO
-learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.99) # TODO
+learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.95) # TODO: very important
 learn_arg.add_argument('--discount', type=float, default=1.0) # TODO
 learn_arg.add_argument('--controller_max_step', type=int, default=2000,
                        help='step for controller parameters')
@@ -77,6 +78,7 @@ learn_arg.add_argument('--softmax_temperature', type=float, default=5.0)
 learn_arg.add_argument('--entropy_coeff', type=float, default=1e-4)
 
 # Shared parameters
+learn_arg.add_argument('--shared_initial_step', type=int, default=0)
 learn_arg.add_argument('--shared_max_step', type=int, default=400,
                        help='step for shared parameters')
 learn_arg.add_argument('--shared_num_sample', type=int, default=1,
