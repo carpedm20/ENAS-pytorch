@@ -100,7 +100,7 @@ class Controller(nn.Module):
             entropy = -(log_prob * probs).sum(1, keepdim=False)
             entropies.append(entropy)
 
-            action = probs.multinomial().data
+            action = probs.multinomial(num_samples=1).data
             selected_log_prob = log_prob.gather(1, get_variable(action, requires_grad=False))
             log_probs.append(selected_log_prob[:,0])
 

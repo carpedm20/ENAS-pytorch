@@ -185,9 +185,19 @@ def get_logger(name=__file__, level=logging.INFO):
 
     return logger
 
+
 logger = get_logger()
 
+
 def prepare_dirs(args):
+    """Sets the directories for the model, and creates those directories.
+
+    Args:
+        args: Parsed from `argparse` in the `config` module.
+
+    TODO(brendan): Perhaps `args.data_path` should be created here and used
+    throughout the code?
+    """
     if args.load_path:
         if args.load_path.startswith(args.log_dir):
             args.model_dir = args.load_path

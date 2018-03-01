@@ -1,19 +1,19 @@
-#!/usr/bin/env python
+"""Entry point."""
+import os
 
 import torch
 
 import data
-import models
 import config
-from utils import *
+import utils
 from trainer import Trainer
-from utils import get_logger
 
-logger = get_logger()
+logger = utils.get_logger()
 
 
-def main(args):
-    prepare_dirs(args)
+def main(args):  # pylint:disable=redefined-outer-name
+    """main Entry point."""
+    utils.prepare_dirs(args)
 
     torch.manual_seed(args.random_seed)
 
@@ -25,12 +25,12 @@ def main(args):
     elif args.dataset == 'cifar':
         dataset = data.image.Image(os.path.join(args.data_dir, args.dataset))
     else:
-        raise NotImplemented(f"{args.dataset} is not supported")
+        raise NotImplementedError(f"{args.dataset} is not supported")
 
     trainer = Trainer(args, dataset)
 
     if args.mode == 'train':
-        save_args(args)
+        utils.save_args(args)
         trainer.train()
     elif args.mode == 'derive':
         assert args.load_path != "", "`--load_path` should be given in `derive` mode"
