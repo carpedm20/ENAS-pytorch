@@ -6,13 +6,13 @@ import torch
 import data
 import config
 import utils
-from trainer import Trainer
+import trainer
 
 logger = utils.get_logger()
 
 
 def main(args):  # pylint:disable=redefined-outer-name
-    """main Entry point."""
+    """main: Entry point."""
     utils.prepare_dirs(args)
 
     torch.manual_seed(args.random_seed)
@@ -27,18 +27,21 @@ def main(args):  # pylint:disable=redefined-outer-name
     else:
         raise NotImplementedError(f"{args.dataset} is not supported")
 
-    trainer = Trainer(args, dataset)
+    trnr = trainer.Trainer(args, dataset)
 
     if args.mode == 'train':
         utils.save_args(args)
-        trainer.train()
+        trnr.train()
     elif args.mode == 'derive':
-        assert args.load_path != "", "`--load_path` should be given in `derive` mode"
-        trainer.derive()
+        assert args.load_path != "", ("`--load_path` should be given in "
+                                      "`derive` mode")
+        trnr.derive()
     else:
         if not args.load_path:
-            raise Exception("[!] You should specify `load_path` to load a pretrained model")
-        trainer.test()
+            raise Exception("[!] You should specify `load_path` to load a "
+                            "pretrained model")
+        trnr.test()
+
 
 if __name__ == "__main__":
     args, unparsed = config.get_args()

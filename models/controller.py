@@ -4,7 +4,6 @@ from collections import defaultdict, namedtuple
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.parameter import Parameter
 
 from utils import draw_network, get_variable, keydefaultdict
 
@@ -30,9 +29,7 @@ class Controller(nn.Module):
         num_total_tokens = sum(self.num_tokens)
 
         self.encoder = nn.Embedding(num_total_tokens, args.controller_hid)
-        self.lstm = nn.LSTMCell(
-                args.controller_hid,
-                args.controller_hid)
+        self.lstm = nn.LSTMCell(args.controller_hid, args.controller_hid)
 
         pivot = 0
         self.decoders = []
@@ -46,8 +43,9 @@ class Controller(nn.Module):
         self.reset_parameters()
         self.static_init_hidden = keydefaultdict(self.init_hidden)
 
-        fn = lambda key: get_variable(
-                t.zeros(key, self.args.controller_hid), self.args.cuda, requires_grad=False)
+        fn = lambda key: get_variable(t.zeros(key, self.args.controller_hid),
+                                      self.args.cuda,
+                                      requires_grad=False)
         self.static_inputs = keydefaultdict(fn)
 
     def reset_parameters(self):
@@ -91,12 +89,13 @@ class Controller(nn.Module):
             # 0: function, 1: previous node
             mode = block_idx % 2
 
-            logits, hidden = self.forward(
-                    inputs, hidden, block_idx,
-                    is_embed=block_idx==0)
+            logits, hidden = self.forward(inputs,
+                                          hidden,
+                                          block_idx,
+                                          is_embed=(block_idx == 0))
 
-            probs = F.softmax(logits)
-            log_prob = F.log_softmax(logits)
+            probs = F.softmax(logits, dim=-1)
+            log_prob = F.log_softmax(logits, dim=-1)
             entropy = -(log_prob * probs).sum(1, keepdim=False)
             entropies.append(entropy)
 

@@ -5,7 +5,6 @@ import json
 import logging
 import numpy as np
 import pygraphviz as pgv
-from tqdm import tqdm, trange
 from datetime import datetime
 from collections import defaultdict
 
