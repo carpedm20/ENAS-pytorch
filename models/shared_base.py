@@ -1,23 +1,23 @@
 import numpy as np
-from torch import nn
+import torch
 
 
 def size(p):
     return np.prod(p.size())
 
-class SharedModel(nn.Module):
+class SharedModel(torch.nn.Module):
     def __init__(self):
-        super(SharedModel, self).__init__()
+        torch.nn.Module.__init__(self)
 
     @property
     def num_parameters(self):
         return sum([size(param) for param in self.parameters()])
 
     def get_f(self, name):
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def get_num_cell_parameters(self, dag):
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def reset_parameters(self):
-        raise NotImplemented()
+        raise NotImplementedError()

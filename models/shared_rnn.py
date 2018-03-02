@@ -202,6 +202,15 @@ class RNN(models.shared_base.SharedModel):
         q = collections.deque()
         q.append(0)
 
+        # NOTE(brendan): Computes connections from the parent nodes `node_id`
+        # to their child nodes `next_id` recursively, skipping leaf nodes. A
+        # leaf node is a node whose id == `self.args.num_blocks`.
+        #
+        # Connections between parent i and child j should be computed as
+        # h_j = c_j*f_{ij}{(W^h_{ij}*h_i)} + (1 - c_j)*h_i,
+        # where c_j = \sigmoid{(W^c_{ij}*h_i)}
+        #
+        # See Training details from Section 3.1 of the paper.
         while True:
             if len(q) == 0:
                 break
@@ -210,8 +219,6 @@ class RNN(models.shared_base.SharedModel):
             nodes = dag[node_id]
 
             for next_node in nodes:
-                # TODO(brendan): Why does this exit on the first outer loop
-                # iteration?
                 next_id = next_node.id
                 if next_id == self.args.num_blocks:
                     leaf_node_ids.append(node_id)
@@ -224,7 +231,8 @@ class RNN(models.shared_base.SharedModel):
 
                 f[next_id] = self.get_f(next_node.name)
                 c[next_id] = F.sigmoid(w_c(h[node_id]))
-                h[next_id] = c[next_id] * f[next_id](w_h(h[node_id])) + (1 - c[next_id]) * h[node_id]
+                h[next_id] = (c[next_id]*f[next_id](w_h(h[node_id])) +
+                              (1 - c[next_id])*h[node_id])
 
                 # if isnan(h[next_id]): import ipdb; ipdb.set_trace()
 

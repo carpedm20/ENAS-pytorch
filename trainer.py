@@ -221,10 +221,11 @@ class Trainer(object):
             self.shared_optim.step()
 
             total_loss += loss.data
-            pbar.set_description(f'train_shared | loss: {loss.data[0]:5.3f}')
+            pbar.set_description(
+                f'train_shared | loss: {loss.data.item():5.3f}')
 
             if step % self.args.log_step == 0 and step > 0:
-                cur_loss = total_loss[0] / self.args.log_step
+                cur_loss = total_loss.item() / self.args.log_step
                 ppl = math.exp(cur_loss)
 
                 logger.info(f'| epoch {self.epoch:3d} '
@@ -292,7 +293,8 @@ class Trainer(object):
 
         for step in pbar:
             # sample models
-            dags, log_probs, entropies = self.controller.sample(with_details=True)
+            dags, log_probs, entropies = self.controller.sample(
+                with_details=True)
 
             # calculate reward
             np_entropies = entropies.data.cpu().numpy()
@@ -316,14 +318,17 @@ class Trainer(object):
             adv_history.extend(adv)
 
             # policy loss
-            loss = - log_probs * utils.get_variable(adv, self.cuda, requires_grad=False)
+            loss = -log_probs*utils.get_variable(adv,
+                                                 self.cuda,
+                                                 requires_grad=False)
             if self.args.entropy_mode == 'regularizer':
                 loss -= self.args.entropy_coeff * entropies
 
-            loss = loss.sum() # or loss.mean()
+            loss = loss.sum()  # or loss.mean()
             pbar.set_description(
-                    f'train_controller| R: {rewards.mean():8.6f} | R-b: {adv.mean():8.6f} '
-                    f'| loss: {loss.cpu().data[0]:8.6f}')
+                f'train_controller | R: {rewards.mean():8.6f} '
+                f'| R-b: {adv.mean():8.6f} '
+                f'| loss: {loss.cpu().data[0]:8.6f}')
 
             # update
             self.controller_optim.zero_grad()
@@ -334,7 +339,7 @@ class Trainer(object):
                         model.parameters(), self.args.controller_grad_clip)
             self.controller_optim.step()
 
-            total_loss += loss.data[0]
+            total_loss += loss.data.item()
 
             if step % self.args.log_step == 0 and step > 0:
                 cur_loss = total_loss / self.args.log_step
@@ -346,9 +351,10 @@ class Trainer(object):
                 if avg_reward_base is None:
                     avg_reward_base = avg_reward
 
-                logger.info(f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
-                            f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
-                            f'| loss {cur_loss:.5f}')
+                logger.info(
+                    f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
+                    f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
+                    f'| loss {cur_loss:.5f}')
 
                 # Tensorboard
                 if self.tb is not None:
