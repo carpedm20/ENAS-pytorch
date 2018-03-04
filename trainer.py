@@ -10,7 +10,6 @@ import torch
 from torch import nn
 import torch.nn.parallel
 from torch.autograd import Variable
-import tqdm
 
 import models
 import utils
@@ -58,9 +57,16 @@ class Trainer(object):
         self.train_data = utils.batchify(dataset.train,
                                          args.batch_size,
                                          self.cuda)
+        # NOTE(brendan): The validation set data is batchified twice
+        # separately: once for computing rewards during the Train Controller
+        # phase (valid_data, batch size == 64), and once for evaluating ppl
+        # over the entire validation set (eval_data, batch size == 1)
         self.valid_data = utils.batchify(dataset.valid,
                                          args.batch_size,
                                          self.cuda)
+        self.eval_data = utils.batchify(dataset.valid,
+                                        args.test_batch_size,
+                                        self.cuda)
         self.test_data = utils.batchify(dataset.test,
                                         args.test_batch_size,
                                         self.cuda)
@@ -133,13 +139,13 @@ class Trainer(object):
             self.train_controller()
 
             if self.epoch % self.args.save_epoch == 0:
-                if self.epoch > 0:
+                with torch.no_grad():
                     best_dag = self.derive()
-                    loss, ppl = self.test(self.test_data,
-                                          best_dag,
-                                          'test_best',
-                                          max_num=self.args.batch_size*100)
-                    print(f'loss: {loss} ppl: {ppl}')
+                    loss, ppl = self.evaluate(self.eval_data,
+                                              best_dag,
+                                              'val_best',
+                                              max_num=self.args.batch_size*100)
+                print(f'loss: {loss} ppl: {ppl}')
                 self.save_model()
 
             if self.epoch >= self.args.shared_decay_after:
@@ -184,8 +190,6 @@ class Trainer(object):
 
         hidden = self.shared.init_hidden(self.args.batch_size)
 
-        pbar = tqdm.tqdm(total=self.train_data.size(0), desc='train_shared')
-
         if max_step is None:
             max_step = self.args.shared_max_step
         else:
@@ -204,13 +208,13 @@ class Trainer(object):
                                              train_idx,
                                              self.max_length)
 
-            loss = self.get_loss(inputs, targets, hidden, dags)
-            # loss, hidden = self.get_loss(inputs,
-            #                              targets,
-            #                              hidden,
-            #                              dags,
-            #                              with_hidden=True)
-            # hidden = utils.detach(hidden)
+            # TODO(brendan): NaN -> device-side assert.
+            loss, hidden = self.get_loss(inputs,
+                                         targets,
+                                         hidden,
+                                         dags,
+                                         with_hidden=True)
+            hidden = utils.detach(hidden)
 
             # update
             self.shared_optim.zero_grad()
@@ -221,37 +225,19 @@ class Trainer(object):
             self.shared_optim.step()
 
             total_loss += loss.data
-            pbar.set_description(
-                f'train_shared | loss: {loss.data.item():5.3f}')
 
             if step % self.args.log_step == 0 and step > 0:
-                cur_loss = total_loss.item() / self.args.log_step
-                ppl = math.exp(cur_loss)
-
-                logger.info(f'| epoch {self.epoch:3d} '
-                            f'| lr {self.shared_lr:4.2f} '
-                            f'| loss {cur_loss:.2f} '
-                            f'| ppl {ppl:8.2f}')
-
-                # Tensorboard
-                if self.tb is not None:
-                    self.tb.scalar_summary('shared/loss',
-                                           cur_loss,
-                                           self.shared_step)
-                    self.tb.scalar_summary('shared/perplexity',
-                                           ppl,
-                                           self.shared_step)
-
+                self._summarize_train(total_loss)
                 total_loss = 0
 
             step += 1
             self.shared_step += 1
-
             train_idx += self.max_length
-            pbar.update(self.max_length)
 
     def get_reward(self, dag, entropies, valid_idx=None):
-        if type(entropies) is not np.ndarray:
+        """
+        """
+        if not isinstance(entropies, np.ndarray):
             entropies = entropies.data.cpu().numpy()
 
         if valid_idx:
@@ -260,7 +246,7 @@ class Trainer(object):
         inputs, targets = self.get_batch(self.valid_data, valid_idx, self.max_length)
         valid_loss = self.get_loss(inputs, targets, None, dag)
 
-        valid_ppl = math.exp(valid_loss.data[0])
+        valid_ppl = math.exp(valid_loss.data.item())
 
         # TODO: we don't know reward_c
         if self.args.ppl_square:
@@ -278,27 +264,39 @@ class Trainer(object):
         return rewards
 
     def train_controller(self):
-        total_loss = 0
+        """Fixes the shared parameters and updates the controller parameters.
 
+        The controller is updated with a score function gradient estimator
+        (i.e., REINFORCE), with the reward being c/valid_ppl, where valid_ppl
+        is computed on a minibatch of validation data.
+
+        A moving average baseline is used.
+
+        The controller is trained for 2000 steps per epoch (i.e.,
+        first (Train Shared) phase -> second (Train Controller) phase).
+        """
         model = self.controller
         model.train()
 
-        pbar = tqdm.trange(self.args.controller_max_step,
-                           desc='train_controller')
+        avg_reward_base = None
+        baseline = None
+        adv_history = []
+        entropy_history = []
+        reward_history = []
 
-        baseline, avg_reward_base = None, None
-        reward_history, adv_history, entropy_history = [], [], []
-
+        total_loss = 0
         valid_idx = 0
-
-        for step in pbar:
+        for step in range(self.args.controller_max_step):
             # sample models
             dags, log_probs, entropies = self.controller.sample(
                 with_details=True)
 
             # calculate reward
             np_entropies = entropies.data.cpu().numpy()
-            rewards = self.get_reward(dags, np_entropies, valid_idx)
+            # NOTE(brendan): No gradients should be backpropagated to the
+            # shared model during controller training, obviously.
+            with torch.no_grad():
+                rewards = self.get_reward(dags, np_entropies, valid_idx)
 
             # discount
             if 1 > self.args.discount > 0:
@@ -325,18 +323,14 @@ class Trainer(object):
                 loss -= self.args.entropy_coeff * entropies
 
             loss = loss.sum()  # or loss.mean()
-            pbar.set_description(
-                f'train_controller | R: {rewards.mean():8.6f} '
-                f'| R-b: {adv.mean():8.6f} '
-                f'| loss: {loss.cpu().data[0]:8.6f}')
 
             # update
             self.controller_optim.zero_grad()
             loss.backward()
 
             if self.args.controller_grad_clip > 0:
-                torch.nn.utils.clip_grad_norm(
-                        model.parameters(), self.args.controller_grad_clip)
+                torch.nn.utils.clip_grad_norm(model.parameters(),
+                                              self.args.controller_grad_clip)
             self.controller_optim.step()
 
             total_loss += loss.data.item()
@@ -390,49 +384,58 @@ class Trainer(object):
 
             valid_idx = (valid_idx + self.max_length) % (self.valid_data.size(0) - 1)
 
-    def test(self, source, dag, name, batch_size=1, max_num=None):
+    def evaluate(self, source, dag, name, batch_size=1, max_num=None):
+        """Evaluate on the validation set.
+
+        NOTE(brendan): We should not be using the test set to develop the
+        algorithm (basic machine learning good practices).
+        """
         self.shared.eval()
         self.controller.eval()
 
-        data = source[:max_num * self.max_length]
+        data = source[:max_num*self.max_length]
 
         total_loss = 0
         hidden = self.shared.init_hidden(batch_size)
 
-        pbar = tqdm.trange(0, data.size(0) - 1, self.max_length, desc='test')
+        pbar = range(0, data.size(0) - 1, self.max_length)
         for count, idx in enumerate(pbar):
-            inputs, targets = self.get_batch(data, idx, evaluation=True)
-            output, hidden = self.shared(inputs, dag, hidden=hidden, is_train=False)
+            inputs, targets = self.get_batch(data, idx)
+            output, hidden = self.shared(inputs,
+                                         dag,
+                                         hidden=hidden,
+                                         is_train=False)
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
             hidden = utils.detach(hidden)
-            ppl = math.exp(total_loss[0] / (count+1) / self.max_length)
-            pbar.set_description(f'test| ppl: {ppl:8.2f}')
+            ppl = math.exp(total_loss.item() / (count + 1) / self.max_length)
 
-        test_loss = total_loss[0] / len(data)
-        ppl = math.exp(test_loss)
+        val_loss = total_loss.item() / len(data)
+        ppl = math.exp(val_loss)
 
-        self.tb.scalar_summary(f'test/{name}_loss', test_loss, self.epoch)
-        self.tb.scalar_summary(f'test/{name}_ppl', ppl, self.epoch)
+        self.tb.scalar_summary(f'eval/{name}_loss', val_loss, self.epoch)
+        self.tb.scalar_summary(f'eval/{name}_ppl', ppl, self.epoch)
+        logger.info(f'eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
 
-        return test_loss, ppl
+        return val_loss, ppl
 
     def derive(self, sample_num=None, valid_idx=0):
         if sample_num is None:
             sample_num = self.args.derive_num_sample
 
-        dags, log_probs, entropies = self.controller.sample(sample_num, with_details=True)
+        dags, _, entropies = self.controller.sample(sample_num,
+                                                    with_details=True)
 
         max_R, best_dag = 0, None
-        pbar = tqdm.tqdm(dags, desc='derive')
-        for dag in pbar:
+        for dag in dags:
             R = self.get_reward(dag, entropies, valid_idx)
             if R.max() > max_R:
                 max_R = R.max()
                 best_dag = dag
-            pbar.set_description(f'derive| max_R: {max_R:8.6f}')
 
-        fname = f'{self.epoch:03d}-{self.controller_step:06d}-{max_R:6.4f}-best.png'
+        logger.info(f'derive | max_R: {max_R:8.6f}')
+        fname = (f'{self.epoch:03d}-{self.controller_step:06d}-'
+                 f'{max_R:6.4f}-best.png')
         path = os.path.join(self.args.model_dir, 'networks', fname)
         utils.draw_network(best_dag, path)
         self.tb.image_summary('derive/best', [path], self.epoch)
@@ -448,11 +451,13 @@ class Trainer(object):
     def controller_lr(self):
         return self.args.controller_lr
 
-    def get_batch(self, source, idx, length=None, evaluation=False):
-        # code from https://github.com/pytorch/examples/blob/master/word_language_model/main.py
-        length = min(length if length else self.max_length, len(source) - 1 - idx)
-        data = Variable(source[idx:idx+length], volatile=evaluation)
-        target = Variable(source[idx+1:idx+1+length].view(-1))
+    def get_batch(self, source, idx, length=None):
+        # code from
+        # https://github.com/pytorch/examples/blob/master/word_language_model/main.py
+        length = min(length if length else self.max_length,
+                     len(source) - 1 - idx)
+        data = Variable(source[idx:idx + length])
+        target = Variable(source[idx + 1:idx + 1 + length].view(-1))
         return data, target
 
     @property
@@ -522,3 +527,22 @@ class Trainer(object):
         self.controller.load_state_dict(
             torch.load(self.controller_path, map_location=map_location))
         logger.info(f'[*] LOADED: {self.controller_path}')
+
+    def _summarize_train(self, total_loss):
+        """Logs a set of training steps."""
+        cur_loss = total_loss.item() / self.args.log_step
+        ppl = math.exp(cur_loss)
+
+        logger.info(f'| epoch {self.epoch:3d} '
+                    f'| lr {self.shared_lr:4.2f} '
+                    f'| loss {cur_loss:.2f} '
+                    f'| ppl {ppl:8.2f}')
+
+        # Tensorboard
+        if self.tb is not None:
+            self.tb.scalar_summary('shared/loss',
+                                   cur_loss,
+                                   self.shared_step)
+            self.tb.scalar_summary('shared/perplexity',
+                                   ppl,
+                                   self.shared_step)
