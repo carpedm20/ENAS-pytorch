@@ -8,10 +8,40 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import models.shared_base
-from utils import get_logger, get_variable, keydefaultdict
+import utils
 
 
-logger = get_logger()
+logger = utils.get_logger()
+
+
+def _get_dropped_weights(w_raw, dropout_p, is_training):
+    """Drops out weights to implement DropConnect.
+
+    Args:
+        w_raw: Full, pre-dropout, weights to be dropped out.
+        dropout_p: Proportion of weights to drop out.
+        is_training: True iff _shared_ model is training.
+
+    Returns:
+        The dropped weights.
+
+    TODO(brendan): Why does torch.nn.functional.dropout() return:
+    1. `torch.autograd.Variable()` on the training loop
+    2. `torch.nn.Parameter()` on the controller or eval loop, when
+    training = False...
+
+    Even though the call to `_setweights` in the Smerity repo's
+    `weight_drop.py` does not have this behaviour, and `F.dropout` always
+    returns `torch.autograd.Variable` there, even when `training=False`?
+
+    The above TODO is the reason for the hacky check for `torch.nn.Parameter`.
+    """
+    dropped_w = F.dropout(w_raw, p=dropout_p, training=is_training)
+
+    if isinstance(dropped_w, torch.nn.Parameter):
+        dropped_w = dropped_w.clone()
+
+    return dropped_w
 
 
 def isnan(tensor):
@@ -108,30 +138,44 @@ class LockedDropout(nn.Module):
 class RNN(models.shared_base.SharedModel):
     """Shared RNN model."""
     def __init__(self, args, corpus):
+        # TODO(brendan): Equivalent of weight drop for ENAS RNN cell?
+        # I.e., the weights of the W_hh weight matrix should be dropped out per
+        # training sequence (per forward pass of length == 35 example during
+        # training).
         models.shared_base.SharedModel.__init__(self)
 
         self.args = args
         self.corpus = corpus
 
+        self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
         self.encoder = EmbeddingDropout(corpus.num_tokens,
                                         args.shared_embed,
                                         dropout=args.shared_dropoute)
-        self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
         self.lockdrop = LockedDropout()
 
         if self.args.tie_weights:
             self.decoder.weight = self.encoder.weight
 
-        self.w_xh = nn.Linear(args.shared_embed + args.shared_hid,
-                              args.shared_hid)
-        self.w_xc = nn.Linear(args.shared_embed + args.shared_hid,
-                              args.shared_hid)
+        # NOTE(brendan): Since W^{x, c} and W^{h, c} are always summed, there
+        # is no point duplicating their bias offset parameter. Likewise for
+        # W^{x, h} and W^{h, h}.
+        self.w_xc = nn.Linear(args.shared_embed, args.shared_hid)
+        self.w_xh = nn.Linear(args.shared_embed, args.shared_hid)
+
+        # The raw weights are stored here because the hidden-to-hidden weights
+        # are weight dropped on the forward pass.
+        self.w_hc_raw = torch.nn.Parameter(
+            torch.Tensor(args.shared_hid, args.shared_hid))
+        self.w_hh_raw = torch.nn.Parameter(
+            torch.Tensor(args.shared_hid, args.shared_hid))
+        self.w_hc = None
+        self.w_hh = None
 
         self.w_h = collections.defaultdict(dict)
         self.w_c = collections.defaultdict(dict)
 
         for idx in range(args.num_blocks):
-            for jdx in range(idx+1, args.num_blocks):
+            for jdx in range(idx + 1, args.num_blocks):
                 self.w_h[idx][jdx] = nn.Linear(args.shared_hid,
                                                args.shared_hid,
                                                bias=False)
@@ -152,7 +196,7 @@ class RNN(models.shared_base.SharedModel):
             self.batch_norm = None
 
         self.reset_parameters()
-        self.static_init_hidden = keydefaultdict(self.init_hidden)
+        self.static_init_hidden = utils.keydefaultdict(self.init_hidden)
 
         logger.info(f'# of parameters: {format(self.num_parameters, ",d")}')
 
@@ -164,10 +208,17 @@ class RNN(models.shared_base.SharedModel):
         time_steps = inputs.size(0)
         batch_size = inputs.size(1)
 
+        is_train = is_train and self.args.mode in ['train']
+
+        self.w_hh = _get_dropped_weights(self.w_hh_raw,
+                                         self.args.shared_wdrop,
+                                         self.training)
+        self.w_hc = _get_dropped_weights(self.w_hc_raw,
+                                         self.args.shared_wdrop,
+                                         self.training)
+
         if hidden is None:
             hidden = self.static_init_hidden[batch_size]
-
-        is_train = is_train and self.args.mode in ['train']
 
         embed = self.encoder(inputs)
 
@@ -175,28 +226,52 @@ class RNN(models.shared_base.SharedModel):
             embed = self.lockdrop(embed,
                                   self.args.shared_dropouti if is_train else 0)
 
+        h1tohT = []
         logits = []
         for step in range(time_steps):
             x_t = embed[step]
             logit, hidden = self.cell(x_t, hidden, dag)
-            logits.append(logit)
+            hidden_norms = hidden.norm(dim=-1)
+            max_norm = 25.0
+            if hidden_norms.max() > max_norm:
+                logger.info(f'clipping {hidden_norms.max()} to {max_norm}')
+                norm = hidden[hidden_norms > max_norm].norm(dim=-1)
+                norm = norm.unsqueeze(-1)
+                detached_norm = torch.autograd.Variable(norm.data,
+                                                        requires_grad=False)
+                hidden[hidden_norms > max_norm] *= max_norm/detached_norm
 
+            logits.append(logit)
+            h1tohT.append(hidden)
+
+        h1tohT = torch.stack(h1tohT)
         output = torch.stack(logits)
+        raw_output = output
         if self.args.shared_dropout > 0:
             output = self.lockdrop(output,
                                    self.args.shared_dropout if is_train else 0)
 
-        decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
-        return decoded.view(output.size(0), output.size(1), decoded.size(1)), hidden
+        dropped_output = output
+
+        decoded = self.decoder(
+            output.view(output.size(0)*output.size(1), output.size(2)))
+        decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))
+
+        extra_out = {'dropped': dropped_output,
+                     'hiddens': h1tohT,
+                     'raw': raw_output}
+        return decoded, hidden, extra_out
 
     def cell(self, x, h_prev, dag):
+        """Computes a single pass through the discovered RNN cell."""
         c = {}
         h = {}
         f = {}
 
         f[0] = self.get_f(dag[-1][0].name)
-        c[0] = F.sigmoid(self.w_xc(torch.cat([x, h_prev], -1)))
-        h[0] = c[0] * f[0](self.w_xh(torch.cat([x, h_prev], -1))) + (1 - c[0]) * h_prev
+        c[0] = F.sigmoid(self.w_xc(x) + F.linear(h_prev, self.w_hc, None))
+        h[0] = (c[0]*f[0](self.w_xh(x) + F.linear(h_prev, self.w_hh, None)) +
+                (1 - c[0])*h_prev)
 
         leaf_node_ids = []
         q = collections.deque()
@@ -211,6 +286,9 @@ class RNN(models.shared_base.SharedModel):
         # where c_j = \sigmoid{(W^c_{ij}*h_i)}
         #
         # See Training details from Section 3.1 of the paper.
+        #
+        # The following algorithm does a breadth-first (since `q.popleft()` is
+        # used) search over the nodes and computes all the hidden states.
         while True:
             if len(q) == 0:
                 break
@@ -234,9 +312,14 @@ class RNN(models.shared_base.SharedModel):
                 h[next_id] = (c[next_id]*f[next_id](w_h(h[node_id])) +
                               (1 - c[next_id])*h[node_id])
 
-                # if isnan(h[next_id]): import ipdb; ipdb.set_trace()
-
                 q.append(next_id)
+
+        # TODO(brendan): Instead of averaging loose ends, perhaps there should
+        # be a set of separate unshared weights for each "loose" connection
+        # between each node in a cell and the output.
+        #
+        # As it stands, all weights W^h_{ij} are doing double duty by
+        # connecting both from i to j, as well as from i to the output.
 
         # average all the loose ends
         leaf_nodes = [h[node_id] for node_id in leaf_node_ids]
@@ -250,7 +333,7 @@ class RNN(models.shared_base.SharedModel):
 
     def init_hidden(self, batch_size):
         zeros = torch.zeros(batch_size, self.args.shared_hid)
-        return get_variable(zeros, self.args.cuda, requires_grad=False)
+        return utils.get_variable(zeros, self.args.cuda, requires_grad=False)
 
     def get_f(self, name):
         name = name.lower()

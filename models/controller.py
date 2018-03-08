@@ -82,12 +82,11 @@ class Controller(torch.nn.Module):
 
         # exploration
         if self.args.mode == 'train':
-            # TODO: not sure whether they use temperature in training as well
-            logits = self.args.tanh_c * F.tanh(logits)
-            # logits = (self.args.tanh_c * F.tanh(logits /
-            #           self.args.softmax_temperature))
-        elif self.args.mode == 'derive':
-            logits = logits / self.args.softmax_temperature
+            logits = (self.args.tanh_c*F.tanh(logits /
+                                              self.args.softmax_temperature))
+
+        # TODO(brendan): Does it make sense to divide by temperature when
+        # deriving architectures?
 
         return logits, (hx, cx)
 
@@ -107,10 +106,11 @@ class Controller(torch.nn.Module):
         entropies = []
         log_probs = []
         prev_nodes = []
+        # NOTE(brendan): The RNN controller alternately outputs an activation,
+        # followed by a previous node, for each block except the last one,
+        # which only gets an activation function. The last node is the output
+        # node, and its previous node is the average of all leaf nodes.
         for block_idx in range(2*(self.args.num_blocks - 1) + 1):
-            # 0: function, 1: previous node
-            mode = block_idx % 2
-
             logits, hidden = self.forward(inputs,
                                           hidden,
                                           block_idx,
@@ -118,14 +118,20 @@ class Controller(torch.nn.Module):
 
             probs = F.softmax(logits, dim=-1)
             log_prob = F.log_softmax(logits, dim=-1)
+            # TODO(brendan): .mean() for entropy?
             entropy = -(log_prob * probs).sum(1, keepdim=False)
-            entropies.append(entropy)
 
             action = probs.multinomial(num_samples=1).data
             selected_log_prob = log_prob.gather(
                 1, utils.get_variable(action, requires_grad=False))
+
+            # TODO(brendan): why the [:, 0] here? Should it be .squeeze(), or
+            # .view()? Same below with `action`.
+            entropies.append(entropy)
             log_probs.append(selected_log_prob[:, 0])
 
+            # 0: function, 1: previous node
+            mode = block_idx % 2
             inputs = utils.get_variable(
                 action[:, 0] + sum(self.num_tokens[:mode]),
                 requires_grad=False)
@@ -138,6 +144,22 @@ class Controller(torch.nn.Module):
         prev_nodes = torch.stack(prev_nodes).transpose(0, 1)
         activations = torch.stack(activations).transpose(0, 1)
 
+        # NOTE(brendan): RNN cell DAGs are represented in the following way:
+        #
+        # 1. Each element (node) in a DAG is a list of `Node`s.
+        #
+        # 2. The `Node`s in the list dag[i] correspond to the subsequent nodes
+        #    that take the output from node i as their own input.
+        #
+        # 3. dag[-1] is the node that takes input from x^{(t)} and h^{(t - 1)}.
+        #    dag[-1] always feeds dag[0].
+        #    dag[-1] acts as if `w_xc`, `w_hc`, `w_xh` and `w_hh` are its
+        #    weights.
+        #
+        # 4. dag[N - 1] is the node that produces the hidden state passed to
+        #    the next timestep. dag[N - 1] is also always a leaf node, and
+        #    therefore is always averaged with the other leaf nodes and fed to
+        #    the output decoder.
         dags = []
         for nodes, func_ids in zip(prev_nodes, activations):
             dag = defaultdict(list)
@@ -156,6 +178,9 @@ class Controller(torch.nn.Module):
             for idx in leaf_nodes:
                 dag[idx] = [Node(self.args.num_blocks, 'avg')]
 
+            # TODO(brendan): This is actually y^{(t)}. h^{(t)} is node N - 1 in
+            # the graph, where N Is the number of nodes. I.e., h^{(t)} takes
+            # only one other node as its input.
             # last h[t] node
             last_node = Node(self.args.num_blocks + 1, 'h[t]')
             dag[self.args.num_blocks] = [last_node]

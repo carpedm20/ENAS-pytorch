@@ -31,6 +31,25 @@ def _get_optimizer(name):
     return optim
 
 
+def _check_abs_max_grad(abs_max_grad, model):
+    """Checks `model` for a new largest gradient for this epoch, in order to
+    track gradient explosions.
+    """
+    finite_grads = [p.grad.data
+                    for p in model.parameters()
+                    if p.grad is not None]
+
+    new_max_grad = max([grad.max() for grad in finite_grads])
+    new_min_grad = min([grad.min() for grad in finite_grads])
+
+    new_abs_max_grad = max(new_max_grad, abs(new_min_grad))
+    if new_abs_max_grad > abs_max_grad:
+        logger.info(f'abs max grad {abs_max_grad}')
+        return new_abs_max_grad
+
+    return abs_max_grad
+
+
 class Trainer(object):
     """A pointless class to wrap training code."""
     def __init__(self, args, dataset):
@@ -53,6 +72,16 @@ class Trainer(object):
         self.epoch = 0
         self.shared_step = 0
         self.start_epoch = 0
+
+        logger.info('regularizing:')
+        for regularizer in [('activation regularization',
+                             self.args.activation_regularization),
+                            ('temporal activation regularization',
+                             self.args.temporal_activation_regularization),
+                            ('norm stabilizer regularization',
+                             self.args.norm_stabilizer_regularization)]:
+            if regularizer[1]:
+                logger.info(f'{regularizer[0]}')
 
         self.train_data = utils.batchify(dataset.train,
                                          args.batch_size,
@@ -141,33 +170,34 @@ class Trainer(object):
             if self.epoch % self.args.save_epoch == 0:
                 with torch.no_grad():
                     best_dag = self.derive()
-                    loss, ppl = self.evaluate(self.eval_data,
-                                              best_dag,
-                                              'val_best',
-                                              max_num=self.args.batch_size*100)
-                print(f'loss: {loss} ppl: {ppl}')
+                    self.evaluate(self.eval_data,
+                                  best_dag,
+                                  'val_best',
+                                  max_num=self.args.batch_size*100)
                 self.save_model()
 
             if self.epoch >= self.args.shared_decay_after:
                 utils.update_lr(self.shared_optim, self.shared_lr)
 
-    def get_loss(self, inputs, targets, hidden, dags, with_hidden=False):
+    def get_loss(self, inputs, targets, hidden, dags):
+        """Computes the loss for the same batch for M models.
+
+        This amounts to an estimate of the loss, which is turned into an
+        estimate for the gradients of the shared model.
+        """
         if not isinstance(dags, list):
             dags = [dags]
 
         loss = 0
         for dag in dags:
-            # previous hidden is useless
-            output, hidden = self.shared(inputs, dag, hidden=hidden)
+            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
             output_flat = output.view(-1, self.dataset.num_tokens)
-            sample_loss = self.ce(output_flat, targets) / self.args.shared_num_sample
+            sample_loss = (self.ce(output_flat, targets) /
+                           self.args.shared_num_sample)
             loss += sample_loss
 
-        if with_hidden:
-            assert len(dags) == 1, 'there are multiple `hidden` for multple `dags`'
-            return loss, hidden
-
-        return loss
+        assert len(dags) == 1, 'there are multiple `hidden` for multple `dags`'
+        return loss, hidden, extra_out
 
     def train_shared(self, max_step=None):
         """Train the language model for 400 steps of minibatches of 64
@@ -181,12 +211,10 @@ class Trainer(object):
         For each weight update, gradients are estimated by sampling M models
         from the fixed controller policy, and averaging their gradients
         computed on a batch of training data.
-
-        TODO(brendan): Should the M models' gradients be averaged on the _same_
-        or _different_ batches of training data?
         """
         model = self.shared
         model.train()
+        self.controller.eval()
 
         hidden = self.shared.init_hidden(self.args.batch_size)
 
@@ -195,7 +223,10 @@ class Trainer(object):
         else:
             max_step = min(self.args.shared_max_step, max_step)
 
+        abs_max_grad = 0
+        abs_max_hidden_norm = 0
         step = 0
+        raw_total_loss = 0
         total_loss = 0
         train_idx = 0
         # TODO(brendan): Why - 1 - 1?
@@ -208,34 +239,56 @@ class Trainer(object):
                                              train_idx,
                                              self.max_length)
 
-            # TODO(brendan): NaN -> device-side assert.
-            loss, hidden = self.get_loss(inputs,
-                                         targets,
-                                         hidden,
-                                         dags,
-                                         with_hidden=True)
+            loss, hidden, extra_out = self.get_loss(inputs,
+                                                    targets,
+                                                    hidden,
+                                                    dags)
+            h1tohT = extra_out['hiddens']
+            raw = extra_out['raw']
             hidden = utils.detach(hidden)
+            raw_total_loss += loss
+
+            # Activation regularization.
+            if self.args.activation_regularization:
+                loss += (self.args.activation_regularization_amount *
+                         extra_out['dropped'].pow(2).mean())
+            # Temporal activation regularization (slowness)
+            if self.args.temporal_activation_regularization:
+                loss += (self.args.temporal_activation_regularization_amount *
+                         (raw[1:] - raw[:-1]).pow(2).mean())
+            # Norm stabilizer regularization
+            if self.args.norm_stabilizer_regularization:
+                loss += (self.args.norm_stabilizer_regularization_amount *
+                         (h1tohT.norm(dim=-1) -
+                          self.args.norm_stabilizer_fixed_point).pow(2).mean())
 
             # update
             self.shared_optim.zero_grad()
             loss.backward()
 
+            new_abs_max_hidden_norm = h1tohT.norm(dim=-1).max().item()
+            if new_abs_max_hidden_norm > abs_max_hidden_norm:
+                abs_max_hidden_norm = new_abs_max_hidden_norm
+                logger.info(f'max hidden {abs_max_hidden_norm}')
+            abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
             torch.nn.utils.clip_grad_norm(model.parameters(),
                                           self.args.shared_grad_clip)
             self.shared_optim.step()
 
             total_loss += loss.data
 
-            if step % self.args.log_step == 0 and step > 0:
-                self._summarize_train(total_loss)
+            if ((step % self.args.log_step) == 0) and (step > 0):
+                self._summarize_shared_train(total_loss, raw_total_loss)
+                raw_total_loss = 0
                 total_loss = 0
 
             step += 1
             self.shared_step += 1
             train_idx += self.max_length
 
-    def get_reward(self, dag, entropies, valid_idx=None):
-        """
+    def get_reward(self, dag, entropies, hidden, valid_idx=None):
+        """Computes the perplexity of a single sampled model on a minibatch of
+        validation data.
         """
         if not isinstance(entropies, np.ndarray):
             entropies = entropies.data.cpu().numpy()
@@ -243,10 +296,13 @@ class Trainer(object):
         if valid_idx:
             valid_idx = 0
 
-        inputs, targets = self.get_batch(self.valid_data, valid_idx, self.max_length)
-        valid_loss = self.get_loss(inputs, targets, None, dag)
+        inputs, targets = self.get_batch(self.valid_data,
+                                         valid_idx,
+                                         self.max_length)
+        valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)
+        valid_loss = valid_loss.data.item()
 
-        valid_ppl = math.exp(valid_loss.data.item())
+        valid_ppl = math.exp(valid_loss)
 
         # TODO: we don't know reward_c
         if self.args.ppl_square:
@@ -261,7 +317,8 @@ class Trainer(object):
             rewards = R * np.ones_like(entropies)
         else:
             raise NotImplementedError(f'Unkown entropy mode: {self.args.entropy_mode}')
-        return rewards
+
+        return rewards, hidden
 
     def train_controller(self):
         """Fixes the shared parameters and updates the controller parameters.
@@ -277,6 +334,9 @@ class Trainer(object):
         """
         model = self.controller
         model.train()
+        # TODO(brendan): ... why can't we call shared.eval() here? Leads to
+        # loss being uniformly zero for the controller.
+        # self.shared.eval()
 
         avg_reward_base = None
         baseline = None
@@ -284,6 +344,7 @@ class Trainer(object):
         entropy_history = []
         reward_history = []
 
+        hidden = self.shared.init_hidden(self.args.batch_size)
         total_loss = 0
         valid_idx = 0
         for step in range(self.args.controller_max_step):
@@ -296,7 +357,10 @@ class Trainer(object):
             # NOTE(brendan): No gradients should be backpropagated to the
             # shared model during controller training, obviously.
             with torch.no_grad():
-                rewards = self.get_reward(dags, np_entropies, valid_idx)
+                rewards, hidden = self.get_reward(dags,
+                                                  np_entropies,
+                                                  hidden,
+                                                  valid_idx)
 
             # discount
             if 1 > self.args.discount > 0:
@@ -335,54 +399,26 @@ class Trainer(object):
 
             total_loss += loss.data.item()
 
-            if step % self.args.log_step == 0 and step > 0:
-                cur_loss = total_loss / self.args.log_step
-
-                avg_reward = np.mean(reward_history)
-                avg_entropy = np.mean(entropy_history)
-                avg_adv = np.mean(adv_history)
-
-                if avg_reward_base is None:
-                    avg_reward_base = avg_reward
-
-                logger.info(
-                    f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
-                    f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
-                    f'| loss {cur_loss:.5f}')
-
-                # Tensorboard
-                if self.tb is not None:
-                    self.tb.scalar_summary('controller/loss',
-                                           cur_loss,
-                                           self.controller_step)
-                    self.tb.scalar_summary('controller/reward',
-                                           avg_reward,
-                                           self.controller_step)
-                    self.tb.scalar_summary('controller/reward-B_per_epoch',
-                                           avg_reward - avg_reward_base,
-                                           self.controller_step)
-                    self.tb.scalar_summary('controller/entropy',
-                                           avg_entropy,
-                                           self.controller_step)
-                    self.tb.scalar_summary('controller/adv',
-                                           avg_adv,
-                                           self.controller_step)
-
-                    paths = []
-                    for dag in dags:
-                        fname = f'{self.epoch:03d}-{self.controller_step:06d}-{avg_reward:6.4f}.png'
-                        path = os.path.join(self.args.model_dir, 'networks', fname)
-                        utils.draw_network(dag, path)
-                        paths.append(path)
-
-                    self.tb.image_summary('controller/sample', paths, self.controller_step)
+            if ((step % self.args.log_step) == 0) and (step > 0):
+                self._summarize_controller_train(total_loss,
+                                                 adv_history,
+                                                 entropy_history,
+                                                 reward_history,
+                                                 avg_reward_base,
+                                                 dags)
 
                 reward_history, adv_history, entropy_history = [], [], []
                 total_loss = 0
 
             self.controller_step += 1
 
-            valid_idx = (valid_idx + self.max_length) % (self.valid_data.size(0) - 1)
+            prev_valid_idx = valid_idx
+            valid_idx = ((valid_idx + self.max_length) %
+                         (self.valid_data.size(0) - 1))
+            # NOTE(brendan): Whenever we wrap around to the beginning of the
+            # validation data, we reset the hidden states.
+            if prev_valid_idx > valid_idx:
+                hidden = self.shared.init_hidden(self.args.batch_size)
 
     def evaluate(self, source, dag, name, batch_size=1, max_num=None):
         """Evaluate on the validation set.
@@ -401,10 +437,10 @@ class Trainer(object):
         pbar = range(0, data.size(0) - 1, self.max_length)
         for count, idx in enumerate(pbar):
             inputs, targets = self.get_batch(data, idx)
-            output, hidden = self.shared(inputs,
-                                         dag,
-                                         hidden=hidden,
-                                         is_train=False)
+            output, hidden, _ = self.shared(inputs,
+                                            dag,
+                                            hidden=hidden,
+                                            is_train=False)
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
             hidden = utils.detach(hidden)
@@ -417,18 +453,23 @@ class Trainer(object):
         self.tb.scalar_summary(f'eval/{name}_ppl', ppl, self.epoch)
         logger.info(f'eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
 
-        return val_loss, ppl
-
     def derive(self, sample_num=None, valid_idx=0):
+        """TODO(brendan): We are always deriving based on the very first batch
+        of validation data? This seems wrong...
+        """
+        # TODO(brendan): ...
+        hidden = self.shared.init_hidden(self.args.batch_size)
+
         if sample_num is None:
             sample_num = self.args.derive_num_sample
 
         dags, _, entropies = self.controller.sample(sample_num,
                                                     with_details=True)
 
-        max_R, best_dag = 0, None
+        max_R = 0
+        best_dag = None
         for dag in dags:
-            R = self.get_reward(dag, entropies, valid_idx)
+            R, _ = self.get_reward(dag, entropies, hidden, valid_idx)
             if R.max() > max_R:
                 max_R = R.max()
                 best_dag = dag
@@ -528,13 +569,69 @@ class Trainer(object):
             torch.load(self.controller_path, map_location=map_location))
         logger.info(f'[*] LOADED: {self.controller_path}')
 
-    def _summarize_train(self, total_loss):
+    def _summarize_controller_train(self,
+                                    total_loss,
+                                    adv_history,
+                                    entropy_history,
+                                    reward_history,
+                                    avg_reward_base,
+                                    dags):
+        """Logs the controller's progress for this training epoch."""
+        cur_loss = total_loss / self.args.log_step
+
+        avg_adv = np.mean(adv_history)
+        avg_entropy = np.mean(entropy_history)
+        avg_reward = np.mean(reward_history)
+
+        if avg_reward_base is None:
+            avg_reward_base = avg_reward
+
+        logger.info(
+            f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
+            f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
+            f'| loss {cur_loss:.5f}')
+
+        # Tensorboard
+        if self.tb is not None:
+            self.tb.scalar_summary('controller/loss',
+                                   cur_loss,
+                                   self.controller_step)
+            self.tb.scalar_summary('controller/reward',
+                                   avg_reward,
+                                   self.controller_step)
+            self.tb.scalar_summary('controller/reward-B_per_epoch',
+                                   avg_reward - avg_reward_base,
+                                   self.controller_step)
+            self.tb.scalar_summary('controller/entropy',
+                                   avg_entropy,
+                                   self.controller_step)
+            self.tb.scalar_summary('controller/adv',
+                                   avg_adv,
+                                   self.controller_step)
+
+            paths = []
+            for dag in dags:
+                fname = (f'{self.epoch:03d}-{self.controller_step:06d}-'
+                         f'{avg_reward:6.4f}.png')
+                path = os.path.join(self.args.model_dir, 'networks', fname)
+                utils.draw_network(dag, path)
+                paths.append(path)
+
+            self.tb.image_summary('controller/sample',
+                                  paths,
+                                  self.controller_step)
+
+    def _summarize_shared_train(self, total_loss, raw_total_loss):
         """Logs a set of training steps."""
         cur_loss = total_loss.item() / self.args.log_step
-        ppl = math.exp(cur_loss)
+        # NOTE(brendan): The raw loss, without adding in the activation
+        # regularization terms, should be used to compute ppl.
+        cur_raw_loss = raw_total_loss.item() / self.args.log_step
+        ppl = math.exp(cur_raw_loss)
 
         logger.info(f'| epoch {self.epoch:3d} '
                     f'| lr {self.shared_lr:4.2f} '
+                    f'| raw loss {cur_raw_loss:.2f} '
                     f'| loss {cur_loss:.2f} '
                     f'| ppl {ppl:8.2f}')
 

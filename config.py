@@ -25,6 +25,9 @@ net_arg.add_argument('--tie_weights', type=str2bool, default=True)
 net_arg.add_argument('--controller_hid', type=int, default=100)
 
 # Shared parameters for PTB
+# NOTE(brendan): See Merity config for wdrop
+# https://github.com/salesforce/awd-lstm-lm.
+net_arg.add_argument('--shared_wdrop', type=float, default=0.5)
 net_arg.add_argument('--shared_dropout', type=float, default=0.4) # TODO
 net_arg.add_argument('--shared_dropoute', type=float, default=0.1) # TODO
 net_arg.add_argument('--shared_dropouti', type=float, default=0.65) # TODO
@@ -35,6 +38,27 @@ net_arg.add_argument('--shared_rnn_activations', type=eval,
                      default="['tanh', 'ReLU', 'identity', 'sigmoid']")
 net_arg.add_argument('--shared_cnn_types', type=eval,
                      default="['3x3', '5x5', 'sep 3x3', 'sep 5x5', 'max 3x3', 'max 5x5']")
+
+# PTB regularizations
+net_arg.add_argument('--activation_regularization',
+                     type=str2bool,
+                     default=False)
+net_arg.add_argument('--activation_regularization_amount',
+                     type=float,
+                     default=2.0)
+net_arg.add_argument('--temporal_activation_regularization',
+                     type=str2bool,
+                     default=False)
+net_arg.add_argument('--temporal_activation_regularization_amount',
+                     type=float,
+                     default=1.0)
+net_arg.add_argument('--norm_stabilizer_regularization',
+                     type=str2bool,
+                     default=False)
+net_arg.add_argument('--norm_stabilizer_regularization_amount',
+                     type=float,
+                     default=1.0)
+net_arg.add_argument('--norm_stabilizer_fixed_point', type=float, default=5.0)
 
 # Shared parameters for CIFAR
 net_arg.add_argument('--cnn_hid', type=int, default=64)
