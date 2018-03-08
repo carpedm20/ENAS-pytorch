@@ -193,9 +193,6 @@ def prepare_dirs(args):
 
     Args:
         args: Parsed from `argparse` in the `config` module.
-
-    TODO(brendan): Perhaps `args.data_path` should be created here and used
-    throughout the code?
     """
     if args.load_path:
         if args.load_path.startswith(args.log_dir):

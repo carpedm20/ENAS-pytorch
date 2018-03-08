@@ -138,10 +138,6 @@ class LockedDropout(nn.Module):
 class RNN(models.shared_base.SharedModel):
     """Shared RNN model."""
     def __init__(self, args, corpus):
-        # TODO(brendan): Equivalent of weight drop for ENAS RNN cell?
-        # I.e., the weights of the W_hh weight matrix should be dropped out per
-        # training sequence (per forward pass of length == 35 example during
-        # training).
         models.shared_base.SharedModel.__init__(self)
 
         self.args = args
@@ -226,6 +222,14 @@ class RNN(models.shared_base.SharedModel):
             embed = self.lockdrop(embed,
                                   self.args.shared_dropouti if is_train else 0)
 
+        # TODO(brendan): The norm of hidden states are clipped here because
+        # otherwise ENAS is especially prone to exploding activations on the
+        # forward pass. This could probably be fixed in a more elegant way, but
+        # it might be exposing a weakness in the ENAS algorithm as currently
+        # proposed.
+        #
+        # For more details, see
+        # https://github.com/carpedm20/ENAS-pytorch/issues/6
         h1tohT = []
         logits = []
         for step in range(time_steps):

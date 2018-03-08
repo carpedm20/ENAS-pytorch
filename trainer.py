@@ -18,6 +18,46 @@ import utils
 logger = utils.get_logger()
 
 
+def _apply_penalties(extra_out, args):
+    """Based on `args`, optionally adds regularization penalty terms for
+    activation regularization, temporal activation regularization and/or hidden
+    state norm stabilization.
+
+    Args:
+        extra_out[*]:
+            dropped: Post-dropout activations.
+            hiddens: All hidden states for a batch of sequences.
+            raw: Pre-dropout activations.
+
+    Returns:
+        The penalty term associated with all of the enabled regularizations.
+
+    See:
+        Regularizing and Optimizing LSTM Language Models (Merity et al., 2017)
+        Regularizing RNNs by Stabilizing Activations (Krueger & Memsevic, 2016)
+    """
+    penalty = 0
+
+    # Activation regularization.
+    if args.activation_regularization:
+        penalty += (args.activation_regularization_amount *
+                    extra_out['dropped'].pow(2).mean())
+
+    # Temporal activation regularization (slowness)
+    if args.temporal_activation_regularization:
+        raw = extra_out['raw']
+        penalty += (args.temporal_activation_regularization_amount *
+                    (raw[1:] - raw[:-1]).pow(2).mean())
+
+    # Norm stabilizer regularization
+    if args.norm_stabilizer_regularization:
+        penalty += (args.norm_stabilizer_regularization_amount *
+                    (extra_out['hiddens'].norm(dim=-1) -
+                     args.norm_stabilizer_fixed_point).pow(2).mean())
+
+    return penalty
+
+
 def discount(x, amount):
     return scipy.signal.lfilter([1], [1, -amount], x[::-1], axis=0)[::-1]
 
@@ -51,7 +91,7 @@ def _check_abs_max_grad(abs_max_grad, model):
 
 
 class Trainer(object):
-    """A pointless class to wrap training code."""
+    """A class to wrap training code."""
     def __init__(self, args, dataset):
         """Constructor for training algorithm.
 
@@ -243,29 +283,16 @@ class Trainer(object):
                                                     targets,
                                                     hidden,
                                                     dags)
-            h1tohT = extra_out['hiddens']
-            raw = extra_out['raw']
             hidden = utils.detach(hidden)
             raw_total_loss += loss
 
-            # Activation regularization.
-            if self.args.activation_regularization:
-                loss += (self.args.activation_regularization_amount *
-                         extra_out['dropped'].pow(2).mean())
-            # Temporal activation regularization (slowness)
-            if self.args.temporal_activation_regularization:
-                loss += (self.args.temporal_activation_regularization_amount *
-                         (raw[1:] - raw[:-1]).pow(2).mean())
-            # Norm stabilizer regularization
-            if self.args.norm_stabilizer_regularization:
-                loss += (self.args.norm_stabilizer_regularization_amount *
-                         (h1tohT.norm(dim=-1) -
-                          self.args.norm_stabilizer_fixed_point).pow(2).mean())
+            loss += _apply_penalties(extra_out, self.args)
 
             # update
             self.shared_optim.zero_grad()
             loss.backward()
 
+            h1tohT = extra_out['hiddens']
             new_abs_max_hidden_norm = h1tohT.norm(dim=-1).max().item()
             if new_abs_max_hidden_norm > abs_max_hidden_norm:
                 abs_max_hidden_norm = new_abs_max_hidden_norm
@@ -334,8 +361,8 @@ class Trainer(object):
         """
         model = self.controller
         model.train()
-        # TODO(brendan): ... why can't we call shared.eval() here? Leads to
-        # loss being uniformly zero for the controller.
+        # TODO(brendan): Why can't we call shared.eval() here? Leads to loss
+        # being uniformly zero for the controller.
         # self.shared.eval()
 
         avg_reward_base = None
@@ -457,7 +484,6 @@ class Trainer(object):
         """TODO(brendan): We are always deriving based on the very first batch
         of validation data? This seems wrong...
         """
-        # TODO(brendan): ...
         hidden = self.shared.init_hidden(self.args.batch_size)
 
         if sample_num is None:
