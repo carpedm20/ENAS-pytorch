@@ -25,6 +25,9 @@ net_arg.add_argument('--tie_weights', type=str2bool, default=True)
 net_arg.add_argument('--controller_hid', type=int, default=100)
 
 # Shared parameters for PTB
+# NOTE(brendan): See Merity config for wdrop
+# https://github.com/salesforce/awd-lstm-lm.
+net_arg.add_argument('--shared_wdrop', type=float, default=0.5)
 net_arg.add_argument('--shared_dropout', type=float, default=0.4) # TODO
 net_arg.add_argument('--shared_dropoute', type=float, default=0.1) # TODO
 net_arg.add_argument('--shared_dropouti', type=float, default=0.65) # TODO
@@ -35,6 +38,27 @@ net_arg.add_argument('--shared_rnn_activations', type=eval,
                      default="['tanh', 'ReLU', 'identity', 'sigmoid']")
 net_arg.add_argument('--shared_cnn_types', type=eval,
                      default="['3x3', '5x5', 'sep 3x3', 'sep 5x5', 'max 3x3', 'max 5x5']")
+
+# PTB regularizations
+net_arg.add_argument('--activation_regularization',
+                     type=str2bool,
+                     default=False)
+net_arg.add_argument('--activation_regularization_amount',
+                     type=float,
+                     default=2.0)
+net_arg.add_argument('--temporal_activation_regularization',
+                     type=str2bool,
+                     default=False)
+net_arg.add_argument('--temporal_activation_regularization_amount',
+                     type=float,
+                     default=1.0)
+net_arg.add_argument('--norm_stabilizer_regularization',
+                     type=str2bool,
+                     default=False)
+net_arg.add_argument('--norm_stabilizer_regularization_amount',
+                     type=float,
+                     default=1.0)
+net_arg.add_argument('--norm_stabilizer_fixed_point', type=float, default=5.0)
 
 # Shared parameters for CIFAR
 net_arg.add_argument('--cnn_hid', type=int, default=64)
@@ -58,8 +82,11 @@ learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['r
 
 # Controller
 learn_arg.add_argument('--ppl_square', type=str2bool, default=False)
+# NOTE(brendan): (Zoph and Le, 2017) page 8 states that c is a constant,
+# usually set at 80.
 learn_arg.add_argument('--reward_c', type=int, default=80,
                        help="WE DON'T KNOW WHAT THIS VALUE SHOULD BE") # TODO
+# NOTE(brendan): irrelevant for actor critic.
 learn_arg.add_argument('--ema_baseline_decay', type=float, default=0.95) # TODO: very important
 learn_arg.add_argument('--discount', type=float, default=1.0) # TODO
 learn_arg.add_argument('--controller_max_step', type=int, default=2000,
@@ -70,8 +97,8 @@ learn_arg.add_argument('--controller_lr', type=float, default=3.5e-4,
 learn_arg.add_argument('--controller_lr_cosine', type=str2bool, default=False)
 learn_arg.add_argument('--controller_lr_max', type=float, default=0.05,
                        help="lr max for cosine schedule")
-learn_arg.add_argument('--controller_lr_min', type=float, default=0.0001,
-                       help="lr max for cosine schedule")
+learn_arg.add_argument('--controller_lr_min', type=float, default=0.001,
+                       help="lr min for cosine schedule")
 learn_arg.add_argument('--controller_grad_clip', type=float, default=0)
 learn_arg.add_argument('--tanh_c', type=float, default=2.5)
 learn_arg.add_argument('--softmax_temperature', type=float, default=5.0)
@@ -81,6 +108,7 @@ learn_arg.add_argument('--entropy_coeff', type=float, default=1e-4)
 learn_arg.add_argument('--shared_initial_step', type=int, default=0)
 learn_arg.add_argument('--shared_max_step', type=int, default=400,
                        help='step for shared parameters')
+# NOTE(brendan): Should be 10 for CNN architectures.
 learn_arg.add_argument('--shared_num_sample', type=int, default=1,
                        help='# of Monte Carlo samples')
 learn_arg.add_argument('--shared_optim', type=str, default='sgd')
@@ -109,6 +137,9 @@ misc_arg.add_argument('--use_tensorboard', type=str2bool, default=True)
 
 
 def get_args():
+    """Parses all of the arguments above, which mostly correspond to the
+    hyperparameters mentioned in the paper.
+    """
     args, unparsed = parser.parse_known_args()
     if args.num_gpu > 0:
         setattr(args, 'cuda', True)

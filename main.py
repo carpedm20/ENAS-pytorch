@@ -1,19 +1,19 @@
-#!/usr/bin/env python
+"""Entry point."""
+import os
 
 import torch
 
 import data
-import models
 import config
-from utils import *
-from trainer import Trainer
-from utils import get_logger
+import utils
+import trainer
 
-logger = get_logger()
+logger = utils.get_logger()
 
 
-def main(args):
-    prepare_dirs(args)
+def main(args):  # pylint:disable=redefined-outer-name
+    """main: Entry point."""
+    utils.prepare_dirs(args)
 
     torch.manual_seed(args.random_seed)
 
@@ -21,24 +21,27 @@ def main(args):
         torch.cuda.manual_seed(args.random_seed)
 
     if args.network_type == 'rnn':
-        dataset = data.text.Corpus(os.path.join(args.data_dir, args.dataset))
+        dataset = data.text.Corpus(args.data_path)
     elif args.dataset == 'cifar':
-        dataset = data.image.Image(os.path.join(args.data_dir, args.dataset))
+        dataset = data.image.Image(args.data_path)
     else:
-        raise NotImplemented(f"{args.dataset} is not supported")
+        raise NotImplementedError(f"{args.dataset} is not supported")
 
-    trainer = Trainer(args, dataset)
+    trnr = trainer.Trainer(args, dataset)
 
     if args.mode == 'train':
-        save_args(args)
-        trainer.train()
+        utils.save_args(args)
+        trnr.train()
     elif args.mode == 'derive':
-        assert args.load_path != "", "`--load_path` should be given in `derive` mode"
-        trainer.derive()
+        assert args.load_path != "", ("`--load_path` should be given in "
+                                      "`derive` mode")
+        trnr.derive()
     else:
         if not args.load_path:
-            raise Exception("[!] You should specify `load_path` to load a pretrained model")
-        trainer.test()
+            raise Exception("[!] You should specify `load_path` to load a "
+                            "pretrained model")
+        trnr.test()
+
 
 if __name__ == "__main__":
     args, unparsed = config.get_args()

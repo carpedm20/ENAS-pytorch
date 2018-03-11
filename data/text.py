@@ -1,17 +1,27 @@
-# Code from https://github.com/pytorch/examples/blob/master/word_language_model/data.py
+# Code from https://github.com/salesforce/awd-lstm-lm
 import os
 import torch as t
+
+import collections
+
 
 class Dictionary(object):
     def __init__(self):
         self.word2idx = {}
         self.idx2word = []
+        self.counter = collections.Counter()
+        self.total = 0
 
     def add_word(self, word):
         if word not in self.word2idx:
             self.idx2word.append(word)
             self.word2idx[word] = len(self.idx2word) - 1
-        return self.word2idx[word]
+
+        token_id = self.word2idx[word]
+        self.counter[token_id] += 1
+        self.total += 1
+
+        return token_id
 
     def __len__(self):
         return len(self.idx2word)
