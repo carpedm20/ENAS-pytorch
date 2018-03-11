@@ -170,7 +170,6 @@ def to_item(x):
     if isinstance(x, (float, int)):
         return x
 
-    assert torch.is_tensor(x)
     if float(torch.__version__[0:3]) < 0.4:
         assert (x.dim() == 1) and (len(x) == 1)
         return x[0]

@@ -226,23 +226,47 @@ class RNN(models.shared_base.SharedModel):
         #
         # For more details, see
         # https://github.com/carpedm20/ENAS-pytorch/issues/6
+        clipped_num = 0
+        max_clipped_norm = 0
         h1tohT = []
         logits = []
         for step in range(time_steps):
             x_t = embed[step]
             logit, hidden = self.cell(x_t, hidden, dag)
+
             hidden_norms = hidden.norm(dim=-1)
             max_norm = 25.0
             if hidden_norms.data.max() > max_norm:
-                logger.info(f'clipping {hidden_norms.max()} to {max_norm}')
-                norm = hidden[hidden_norms > max_norm].norm(dim=-1)
-                norm = norm.unsqueeze(-1)
-                detached_norm = torch.autograd.Variable(norm.data,
-                                                        requires_grad=False)
-                hidden[hidden_norms > max_norm] *= max_norm/detached_norm
+                # TODO(brendan): Just directly use the torch slice operations
+                # in PyTorch v0.4.
+                #
+                # This workaround for PyTorch v0.3.1 does everything in numpy,
+                # because the PyTorch slicing and slice assignment is too
+                # flaky.
+                hidden_norms = hidden_norms.data.cpu().numpy()
+
+                clipped_num += 1
+                if hidden_norms.max() > max_clipped_norm:
+                    max_clipped_norm = hidden_norms.max()
+
+                clip_select = hidden_norms > max_norm
+                clip_norms = hidden_norms[clip_select]
+
+                mask = np.ones(hidden.size())
+                normalizer = max_norm/clip_norms
+                normalizer = normalizer[:, np.newaxis]
+
+                mask[clip_select] = normalizer
+                hidden *= torch.autograd.Variable(
+                    torch.FloatTensor(mask).cuda(), requires_grad=False)
 
             logits.append(logit)
             h1tohT.append(hidden)
+
+        if clipped_num > 0:
+            logger.info(f'clipped {clipped_num} hidden states in one forward '
+                        f'pass. '
+                        f'max clipped hidden state norm: {max_clipped_norm}')
 
         h1tohT = torch.stack(h1tohT)
         output = torch.stack(logits)
