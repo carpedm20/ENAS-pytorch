@@ -1,14 +1,15 @@
 from __future__ import print_function
 
+from collections import defaultdict
+from datetime import datetime
 import os
 import json
 import logging
+
 import numpy as np
 import pygraphviz as pgv
-from datetime import datetime
-from collections import defaultdict
 
-import torch as t
+import torch
 from torch.autograd import Variable
 
 from PIL import Image
@@ -130,7 +131,7 @@ def detach(h):
 
 def get_variable(inputs, cuda=False, **kwargs):
     if type(inputs) in [list, np.ndarray]:
-        inputs = t.Tensor(inputs)
+        inputs = torch.Tensor(inputs)
     if cuda:
         out = Variable(inputs.cuda(), **kwargs)
     else:
@@ -162,6 +163,20 @@ class keydefaultdict(defaultdict):
         else:
             ret = self[key] = self.default_factory(key)
             return ret
+
+
+def to_item(x):
+    """Converts x, possibly scalar and possibly tensor, to a Python scalar."""
+    if isinstance(x, (float, int)):
+        return x
+
+    assert torch.is_tensor(x)
+    if float(torch.__version__[0:3]) < 0.4:
+        assert (x.dim() == 1) and (len(x) == 1)
+        return x[0]
+
+    return x.item()
+
 
 def get_logger(name=__file__, level=logging.INFO):
     logger = logging.getLogger(name)

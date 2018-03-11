@@ -51,7 +51,7 @@ def _construct_dags(prev_nodes, activations, func_names, num_blocks):
 
         # add following nodes
         for jdx, (idx, func_id) in enumerate(zip(nodes, func_ids[1:])):
-            dag[idx.item()].append(Node(jdx + 1, func_names[func_id]))
+            dag[utils.to_item(idx)].append(Node(jdx + 1, func_names[func_id]))
 
         leaf_nodes = set(range(num_blocks)) - dag.keys()
 

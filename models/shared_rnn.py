@@ -63,7 +63,6 @@ class EmbeddingDropout(torch.nn.Embedding):
     def __init__(self,
                  num_embeddings,
                  embedding_dim,
-                 padding_idx=None,
                  max_norm=None,
                  norm_type=2,
                  scale_grad_by_freq=False,
@@ -81,15 +80,13 @@ class EmbeddingDropout(torch.nn.Embedding):
         See `torch.nn.Embedding` for remaining arguments.
         """
         torch.nn.Embedding.__init__(self,
-                                    num_embeddings,
-                                    embedding_dim,
-                                    padding_idx,
-                                    max_norm,
-                                    norm_type,
-                                    scale_grad_by_freq,
-                                    sparse)
+                                    num_embeddings=num_embeddings,
+                                    embedding_dim=embedding_dim,
+                                    max_norm=max_norm,
+                                    norm_type=norm_type,
+                                    scale_grad_by_freq=scale_grad_by_freq,
+                                    sparse=sparse)
         self.dropout = dropout
-        self.padding_idx = padding_idx if padding_idx else -1
         assert (dropout >= 0.0) and (dropout < 1.0), ('Dropout must be >= 0.0 '
                                                       'and < 1.0')
         self.scale = scale
@@ -114,11 +111,10 @@ class EmbeddingDropout(torch.nn.Embedding):
 
         return F.embedding(inputs,
                            masked_weight,
-                           self.padding_idx,
-                           self.max_norm,
-                           self.norm_type,
-                           self.scale_grad_by_freq,
-                           self.sparse)
+                           max_norm=self.max_norm,
+                           norm_type=self.norm_type,
+                           scale_grad_by_freq=self.scale_grad_by_freq,
+                           sparse=self.sparse)
 
 
 class LockedDropout(nn.Module):
@@ -237,7 +233,7 @@ class RNN(models.shared_base.SharedModel):
             logit, hidden = self.cell(x_t, hidden, dag)
             hidden_norms = hidden.norm(dim=-1)
             max_norm = 25.0
-            if hidden_norms.max() > max_norm:
+            if hidden_norms.data.max() > max_norm:
                 logger.info(f'clipping {hidden_norms.max()} to {max_norm}')
                 norm = hidden[hidden_norms > max_norm].norm(dim=-1)
                 norm = norm.unsqueeze(-1)

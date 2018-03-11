@@ -1,4 +1,5 @@
 """The module for training ENAS."""
+import contextlib
 import glob
 import math
 import os
@@ -69,6 +70,16 @@ def _get_optimizer(name):
         optim = torch.optim.Adam
 
     return optim
+
+
+def _get_no_grad_ctx_mgr():
+    """Returns a the `torch.no_grad` context manager for PyTorch version >=
+    0.4, or a no-op context manager otherwise.
+    """
+    if float(torch.__version__[0:3]) >= 0.4:
+        return torch.no_grad()
+
+    return contextlib.suppress()
 
 
 def _check_abs_max_grad(abs_max_grad, model):
@@ -208,7 +219,7 @@ class Trainer(object):
             self.train_controller()
 
             if self.epoch % self.args.save_epoch == 0:
-                with torch.no_grad():
+                with _get_no_grad_ctx_mgr():
                     best_dag = self.derive()
                     self.evaluate(self.eval_data,
                                   best_dag,
@@ -293,7 +304,8 @@ class Trainer(object):
             loss.backward()
 
             h1tohT = extra_out['hiddens']
-            new_abs_max_hidden_norm = h1tohT.norm(dim=-1).max().item()
+            new_abs_max_hidden_norm = utils.to_item(
+                h1tohT.norm(dim=-1).data.max())
             if new_abs_max_hidden_norm > abs_max_hidden_norm:
                 abs_max_hidden_norm = new_abs_max_hidden_norm
                 logger.info(f'max hidden {abs_max_hidden_norm}')
@@ -327,7 +339,7 @@ class Trainer(object):
                                          valid_idx,
                                          self.max_length)
         valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)
-        valid_loss = valid_loss.data.item()
+        valid_loss = utils.to_item(valid_loss.data)
 
         valid_ppl = math.exp(valid_loss)
 
@@ -383,7 +395,7 @@ class Trainer(object):
             np_entropies = entropies.data.cpu().numpy()
             # NOTE(brendan): No gradients should be backpropagated to the
             # shared model during controller training, obviously.
-            with torch.no_grad():
+            with _get_no_grad_ctx_mgr():
                 rewards, hidden = self.get_reward(dags,
                                                   np_entropies,
                                                   hidden,
@@ -424,7 +436,7 @@ class Trainer(object):
                                               self.args.controller_grad_clip)
             self.controller_optim.step()
 
-            total_loss += loss.data.item()
+            total_loss += utils.to_item(loss.data)
 
             if ((step % self.args.log_step) == 0) and (step > 0):
                 self._summarize_controller_train(total_loss,
@@ -463,7 +475,7 @@ class Trainer(object):
 
         pbar = range(0, data.size(0) - 1, self.max_length)
         for count, idx in enumerate(pbar):
-            inputs, targets = self.get_batch(data, idx)
+            inputs, targets = self.get_batch(data, idx, volatile=True)
             output, hidden, _ = self.shared(inputs,
                                             dag,
                                             hidden=hidden,
@@ -471,9 +483,9 @@ class Trainer(object):
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
             hidden = utils.detach(hidden)
-            ppl = math.exp(total_loss.item() / (count + 1) / self.max_length)
+            ppl = math.exp(utils.to_item(total_loss) / (count + 1) / self.max_length)
 
-        val_loss = total_loss.item() / len(data)
+        val_loss = utils.to_item(total_loss) / len(data)
         ppl = math.exp(val_loss)
 
         self.tb.scalar_summary(f'eval/{name}_loss', val_loss, self.epoch)
@@ -518,13 +530,14 @@ class Trainer(object):
     def controller_lr(self):
         return self.args.controller_lr
 
-    def get_batch(self, source, idx, length=None):
+    def get_batch(self, source, idx, length=None, volatile=False):
         # code from
         # https://github.com/pytorch/examples/blob/master/word_language_model/main.py
         length = min(length if length else self.max_length,
                      len(source) - 1 - idx)
-        data = Variable(source[idx:idx + length])
-        target = Variable(source[idx + 1:idx + 1 + length].view(-1))
+        data = Variable(source[idx:idx + length], volatile=volatile)
+        target = Variable(source[idx + 1:idx + 1 + length].view(-1),
+                          volatile=volatile)
         return data, target
 
     @property
@@ -649,10 +662,10 @@ class Trainer(object):
 
     def _summarize_shared_train(self, total_loss, raw_total_loss):
         """Logs a set of training steps."""
-        cur_loss = total_loss.item() / self.args.log_step
+        cur_loss = utils.to_item(total_loss) / self.args.log_step
         # NOTE(brendan): The raw loss, without adding in the activation
         # regularization terms, should be used to compute ppl.
-        cur_raw_loss = raw_total_loss.item() / self.args.log_step
+        cur_raw_loss = utils.to_item(raw_total_loss) / self.args.log_step
         ppl = math.exp(cur_raw_loss)
 
         logger.info(f'| epoch {self.epoch:3d} '
