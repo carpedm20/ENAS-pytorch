@@ -295,7 +295,7 @@ class Trainer(object):
                                                     hidden,
                                                     dags)
             hidden = utils.detach(hidden)
-            raw_total_loss += loss
+            raw_total_loss += loss.data
 
             loss += _apply_penalties(extra_out, self.args)
 
@@ -337,7 +337,8 @@ class Trainer(object):
 
         inputs, targets = self.get_batch(self.valid_data,
                                          valid_idx,
-                                         self.max_length)
+                                         self.max_length,
+                                         volatile=True)
         valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)
         valid_loss = utils.to_item(valid_loss.data)
 
