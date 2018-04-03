@@ -6,6 +6,8 @@ PyTorch implementation of [Efficient Neural Architecture Search via Parameters S
 
 **ENAS** reduce the computational requirement (GPU-hours) of [Neural Architecture Search](https://arxiv.org/abs/1611.01578) (**NAS**) by 1000x via parameter sharing between models that are subgraphs within a large computational graph. SOTA on `Penn Treebank` language modeling.
 
+**\*\*[Caveat] Use official code from the authors: [link](https://github.com/melodyguan/enas)\*\***
+
 
 ## Prerequisites
 

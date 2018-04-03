@@ -134,6 +134,7 @@ misc_arg.add_argument('--data_dir', type=str, default='data')
 misc_arg.add_argument('--num_gpu', type=int, default=1)
 misc_arg.add_argument('--random_seed', type=int, default=12345)
 misc_arg.add_argument('--use_tensorboard', type=str2bool, default=True)
+misc_arg.add_argument('--num_workers', type=int, default=4)
 
 
 def get_args():
