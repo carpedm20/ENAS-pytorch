@@ -7,6 +7,7 @@ import data
 import config
 import utils
 import trainer
+import conv_trainer
 
 logger = utils.get_logger()
 
@@ -22,12 +23,15 @@ def main(args):  # pylint:disable=redefined-outer-name
 
     if args.network_type == 'rnn':
         dataset = data.text.Corpus(args.data_path)
-    elif args.dataset == 'cifar':
-        dataset = data.image.Image(args.data_path)
+    elif args.dataset == 'cifar10':
+        dataset = data.image.Image(args)
     else:
         raise NotImplementedError(f"{args.dataset} is not supported")
 
-    trnr = trainer.Trainer(args, dataset)
+    if args.network_type == 'rnn':
+        trnr = trainer.Trainer(args, dataset)
+    else:
+        trnr = conv_trainer.ConvTrainer(args, dataset)
 
     if args.mode == 'train':
         utils.save_args(args)
