@@ -7,7 +7,7 @@ import json
 import logging
 
 import numpy as np
-import pygraphviz as pgv
+# import pygraphviz as pgv
 
 import torch
 from torch.autograd import Variable
@@ -61,6 +61,7 @@ def add_node(graph, node_id, label, shape='box', style='filled'):
 
 def draw_network(dag, path):
     makedirs(os.path.dirname(path))
+    raise "no Graphviz"
     graph = pgv.AGraph(directed=True, strict=True,
                        fontname='Helvetica', arrowtype='open') # not work?
 

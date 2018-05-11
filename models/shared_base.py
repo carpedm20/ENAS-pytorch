@@ -16,8 +16,10 @@ class SharedModel(torch.nn.Module):
     def get_f(self, name):
         raise NotImplementedError()
 
+    #TODO: Is this actually useful for something?
     def get_num_cell_parameters(self, dag):
         raise NotImplementedError()
 
+    #TODO: Is this actually useful for anything?
     def reset_parameters(self):
         raise NotImplementedError()
