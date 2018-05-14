@@ -20,7 +20,7 @@ net_arg = add_argument_group('Network')
 net_arg.add_argument('--network_type', type=str, choices=['rnn', 'cnn'], default='cnn')
 
 # Controller
-net_arg.add_argument('--num_blocks', type=int, default=6)
+net_arg.add_argument('--num_blocks', type=int, default=5)
 # net_arg.add_argument('--tie_weights', type=str2bool, default=True)
 # net_arg.add_argument('--controller_hid', type=int, default=100)
 
@@ -74,7 +74,7 @@ learn_arg = add_argument_group('Learning')
 learn_arg.add_argument('--mode', type=str, default='train',
                        choices=['train', 'derive', 'test'],
                        help='train: Training ENAS, derive: Deriving Architectures')
-learn_arg.add_argument('--batch_size', type=int, default=16)
+learn_arg.add_argument('--batch_size', type=int, default=2)
 learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
 learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['reward', 'regularizer'])

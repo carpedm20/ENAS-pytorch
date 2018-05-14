@@ -13,12 +13,30 @@ logger = get_logger()
 
 
 def conv3x3(in_planes, out_planes, stride=1):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+    layer = nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
+    return conv_layer(layer, out_planes)
 
 def conv5x5(in_planes, out_planes, stride=1):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=5, stride=stride,
+    layer = nn.Conv2d(in_planes, out_planes, kernel_size=5, stride=stride,
                      padding=1, bias=False)
+    return conv_layer(layer, out_planes)
+
+def avg3x3(in_planes, out_planes, stride=1):
+    return nn.AvgPool2d(3, stride=stride)
+
+def max3x3(in_planes, out_planes, stride=1):
+    return nn.MaxPool2d(3, stride=stride)
+
+def identity(in_planes, out_planes, stride=1):
+    return nn.MaxPool2d(1, stride=1)
+
+def conv_layer(conv, num_features):
+    return nn.Sequential(
+        nn.ReLU(), #nn.ReLU(inplace=True),
+        conv,
+        nn.BatchNorm2d(num_features=num_features),
+    )
 
 def conv(kernel, planes, reducing):
     if kernel == 3:
@@ -41,6 +59,7 @@ def conv(kernel, planes, reducing):
 
 
 class CNNCell(SharedModel):
+    default_layer_types = [conv3x3, conv5x5]
     def __init__(self, args, input_channels, num_filters, reducing=False):
         super().__init__()
 
@@ -103,9 +122,14 @@ class CNNCell(SharedModel):
         #TODO: Figure out if this should be implemented
         pass
 
+    def to_cuda(self, device, dag):
+        for source, target, type in dag:
+            self.connections[source][target][type].to(device)
+
 
 class CNN(SharedModel):
-    def __init__(self, args, input_channels, height, width, output_classes, architecture=[('normal', 64), ('reducing', 64), ('normal', 64), ('reducing', 64), ('normal', 64)]):
+    def __init__(self, args, input_channels, height, width, output_classes,
+                 architecture=[('normal', 768//4)]*6 + [('reducing', 768//2)] + [('normal', 768//2)]*6 + [('reducing', 768)] +  [('normal', 768)]*6):
         super().__init__()
 
         self.args = args
@@ -140,6 +164,8 @@ class CNN(SharedModel):
         if self.output_classes:
             self.conv_output_size = self.output_height * self.output_width * self.architecture[-1][-1]
             self.out_layer = nn.Linear(self.conv_output_size, self.output_classes)
+
+
     def forward(self, inputs, cell_dag, reducing_cell_dag):
         for cell in self.cells:
             if cell.reducing:
@@ -165,3 +191,12 @@ class CNN(SharedModel):
     def reset_parameters(self):
         for cell in self.cells:
             cell.reset_parameters()
+
+    def to_cuda(self, device, cell_dag, reducing_cell_dag):
+        for cell in self.cells:
+            if cell.reducing:
+                cell.to_cuda(device, reducing_cell_dag)
+            else:
+                cell.to_cuda(device, cell_dag)
+
+        self.out_layer.to(device)
