@@ -125,8 +125,10 @@ class AdamShared(Optimizer):
         return loss
 
     def full_reset_grad(self):
-        self.zero_grad()
+        # self.zero_grad()
         r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
         for group in self.param_groups:
             for p in group['params']:
-                p.grad = None
+                if p.grad is not None:
+                    p.grad.detach_()
+                    p.grad = None

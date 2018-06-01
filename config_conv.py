@@ -74,7 +74,7 @@ learn_arg = add_argument_group('Learning')
 learn_arg.add_argument('--mode', type=str, default='train',
                        choices=['train', 'derive', 'test'],
                        help='train: Training ENAS, derive: Deriving Architectures')
-learn_arg.add_argument('--batch_size', type=int, default=2)
+learn_arg.add_argument('--batch_size', type=int, default=28)
 learn_arg.add_argument('--test_batch_size', type=int, default=1)
 learn_arg.add_argument('--max_epoch', type=int, default=150)
 learn_arg.add_argument('--entropy_mode', type=str, default='reward', choices=['reward', 'regularizer'])
@@ -134,7 +134,7 @@ misc_arg.add_argument('--data_dir', type=str, default='data')
 misc_arg.add_argument('--num_gpu', type=int, default=1)
 misc_arg.add_argument('--random_seed', type=int, default=12345)
 misc_arg.add_argument('--use_tensorboard', type=str2bool, default=True)
-misc_arg.add_argument('--num_workers', type=int, default=4)
+misc_arg.add_argument('--num_workers', type=int, default=0)
 
 
 def get_args():
