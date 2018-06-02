@@ -1,29 +1,53 @@
-import copy
 import datetime
 import gc
 import os
-import random
-import sys
 import time
 import traceback
 
 import numpy as np
-from scipy.special import expit, logit
-from torch import nn, optim
-from tqdm import tqdm
 import torch
+from models import shared_cnn
+from models.shared_cnn import CNN
+from scipy.special import logit
+from torch import nn
+from tqdm import tqdm
 
 import config_conv
 from adam_shared import AdamShared
 from dropout_sgd import DropoutSGD
-from models.shared_cnn import CNN
-from models import shared_cnn
-import data
-import objgraph
+from src import data
 
 np.set_printoptions(suppress=True)
 
 import csv
+
+import logging
+import shutil
+
+def get_logger(save_path):
+    logger = logging.getLogger('ENAS')
+    errorFH = logging.FileHandler(os.path.join(save_path,'errors.log'))
+    errorFH.setLevel(logging.ERROR)
+
+    debugFH = logging.FileHandler(os.path.join(save_path,'all.log'))
+    debugFH.setLevel(logging.DEBUG)
+
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    errorFH.setFormatter(formatter)
+    debugFH.setFormatter(formatter)
+
+    logger.addHandler(errorFH)
+    logger.addHandler(debugFH)
+    logger.addHandler(ch)
+    return logger
+
+def to_string(**kwargs):
+    return ' '.join([k+':' + v for k, v in kwargs.items()])
+
+
 
 class Flatten(nn.Module):
     def forward(self, input):
@@ -57,9 +81,13 @@ def test_model():
 def start():
     return time.clock()
 
-def stop(startTime, debugTest=""):
+def stop(startTime, debugTest="", logger=None):
     diff = time.clock() - startTime
-    print(f"{debugTest} Diff={diff}")
+    message = f"{debugTest} Diff={diff}"
+    if logger:
+        logger.info(message)
+    else:
+        print(message)
     return diff
 
 def trim_dag_one_way(dag: list, start_nodes: set, forward = True):
@@ -97,6 +125,10 @@ def main():
     save_path = "./logs/new/test_save_42"
 
     os.makedirs(save_path)
+    shutil.copytree(os.path.dirname(os.path.realpath(__file__)), os.path.join(save_path, 'src'))
+
+    logger = get_logger(save_path)
+
     args, unparsed = config_conv.get_args()
     gpu = torch.device("cuda:0")
     cpu = torch.device("cpu")
@@ -106,13 +138,13 @@ def main():
         sT = start()
         cnn = CNN(args, input_channels=3, height=32, width=32, output_classes=10, gpu=device)
         cnn.train()
-        stop(sT, "CNN")
+        stop(sT, "CNN", logger)
 
         sT = start()
         dropout_opt = DropoutSGD([cnn.dag_variables, cnn.reducing_dag_variables], connections=cnn.all_connections,
                                  lr=8*25*20, weight_decay=0)
         cnn_optimizer = AdamShared(cnn.parameters(), lr=0.00001, weight_decay=1e-5)
-        stop(sT, "optimizer")
+        stop(sT, "optimizer", logger)
 
         return cnn, cnn_optimizer, dropout_opt
 
@@ -153,8 +185,8 @@ def main():
 
     print(parent_counts)
 
-    dag_probs = np.array(list(2/parent_counts[jdx] for idx, jdx, _type in all_connections))
-    reduction_dag_probs = np.array(dag_probs)
+    dags_probs = np.array(list(2/parent_counts[jdx] for idx, jdx, _type in all_connections))
+    reduction_dag_probs = np.array(dags_probs)
 
     # print(dag_probs)
 
@@ -164,7 +196,7 @@ def main():
     # reduction_dag_logits = np.array(dag_logits)
 
     # target_ave_prob = 1/len(shared_cnn.CNNCell.default_layer_types)
-    target_ave_prob = np.mean(dag_probs)
+    target_ave_prob = np.mean(dags_probs)
     print("target_ave_prob", target_ave_prob)
 
 
@@ -172,7 +204,7 @@ def main():
         dag_logits = np.load(os.path.join(load_path, "dag_logits.npy"))
         reduction_dag_logits = np.load(os.path.join(load_path, "reduction_dag_logits.npy"))
     else:
-        dag_logits = logit(dag_probs)
+        dag_logits = logit(dags_probs)
         reduction_dag_logits = logit(reduction_dag_probs)
 
     def sample(probs):
@@ -180,25 +212,20 @@ def main():
         return np.squeeze(np.argwhere(probs >= random_nums))
 
 
-    def sample_dags(dag_probs, reduction_dag_probs, all_connections):
+    def sample_dags(dag_probs, all_connections):
         dag_idx = sample(dag_probs)
-        reduction_dag_idx = sample(reduction_dag_probs)
+        # reduction_dag_idx = sample(reduction_dag_probs)
         if dag_idx.size > 0:
             dag = list(all_connections[i] for i in np.nditer(dag_idx))
         else:
             dag = []
 
-        if reduction_dag_idx.size > 0:
-            reduction_dag = list(all_connections[i] for i in np.nditer(reduction_dag_idx))
-        else:
-            reduction_dag = []
         dag.sort()
-        reduction_dag.sort()
-        return dag, reduction_dag
+        return dag
 
     def sample_valid_dag(dag_probs, reduction_dag_probs, all_connections):
         while True:
-            dag, reduction_dag = sample_dags(dag_probs, reduction_dag_probs, all_connections)
+            dag, reduction_dag = sample_dags(dag_probs, all_connections), sample_dags(reduction_dag_probs, all_connections)
             try:
                 dag = trim_dag(dag, {0,1}, 1 + args.num_blocks)
                 reduction_dag = trim_dag(reduction_dag, {0,1}, 1 + args.num_blocks)
@@ -258,17 +285,14 @@ def main():
 
         return new_dag
 
-    def sample_fixed_dag(dag_probs, reduction_dag_probs, all_connections):
-        while True:
-            dag, reduction_dag = sample_dags(dag_probs, reduction_dag_probs, all_connections)
-            dag = fix_dag(dag, {0,1}, 1 + args.num_blocks)
-            reduction_dag = fix_dag(reduction_dag, {0,1}, 1 + args.num_blocks)
-            return dag, reduction_dag
+    def sample_fixed_dag(dag_probs, all_connections):
+        dag, reduction_dag = sample_dags(dag_probs, all_connections)
+        dag = fix_dag(dag, {0, 1}, 1 + args.num_blocks)
+        reduction_dag = fix_dag(reduction_dag, {0, 1}, 1 + args.num_blocks)
+        return dag, reduction_dag
 
-
-    def sigmoid_derivitive(x):
-        return expit(x)*(1.0-expit(x))
-
+    def sample_fixed_dags(dags_probs, all_connections):
+        return [sample_fixed_dag(dag_probs, all_connections=all_connections) for dag_probs in dags_probs]
 
     def get_random():
         random_dag = []
@@ -282,48 +306,16 @@ def main():
                 random_dag.append(possible_connections[id])
 
         return trim_dag(random_dag, {0, 1}, 1 + args.num_blocks)
-        # return random_dag
 
-    # random_dag_1 = get_random()
-    # random_dag_2 = get_random()
-    #
-    # print(f'random_dag_1: {random_dag_1}')
-    # print(f'random_dag_2: {random_dag_2}')
-    # trimmed_random_dag = trim_dag(random_dag, {0, 1}, 1 + args.num_blocks)
-    #
-    # print(f'random_dag: {random_dag}')
-    # print(f'random_dag: {trimmed_random_dag}')
-    # print(f'random_dag: {len(random_dag)}, trimmed_random_dag: {len(trimmed_random_dag)}')
-
-    # dag1 = []
-    # # last = 0
-    # for i in range(2, 2 + args.num_blocks):
-    #     # if
-    #     dag1.append((i-2, i, shared_cnn.conv3x3))
-    #     dag1.append((i-1, i, shared_cnn.conv3x3))
-    #
-    #
-    # dag2 = []
-    # for i in range(2, 2 + args.num_blocks):
-    #     dag2.append((i - 1, i, shared_cnn.conv3x3))
-    #
-    # dag3 = []
-    # for i in range(2, 2 + args.num_blocks):
-    #     dag3.append((i - 1, i, shared_cnn.conv5x5))
-
-    # sT = start()
-    # cnn.to_gpu(trimmed_random_dag, trimmed_random_dag)
-    # # cnn.to_device(device, dag1, dag1)
-    # stop(sT, "to_cuda")
     num_batches = 1
     total_loss = 0
     total_acc = 0
 
-    last_dag = ([], [])
+    last_dags = ([], [])
 
     def lengths():
         for i in range(10000):
-            yield min(50 + i//440, 250)
+            yield min(50 + i//100, 250)
 
         # while True:
         #     yield 500
@@ -350,60 +342,24 @@ def main():
 
                     try:
                         if batch_i % current_length == 0 and not get_new_network:
+                            if num_dropout_batches_items > 0:
+                                current_length = next(iter_lengths)
 
-                            if num_dropout_batches_items == 0:
-                                num_dropout_batches_items = 1
-                            current_length = next(iter_lengths)
-                            # objgraph.show_most_common_types()  # List most common object types
-                            # objgraph.show_growth()
-                            gradient_dicts = dropout_opt.step_grad()
-                            dag_grad_dict, reduction_dag_grad_dict = gradient_dicts[0], gradient_dicts[1]
+                                gradient_dicts = dropout_opt.step_grad()
+                                gradient_dicts = [{k: v/num_dropout_batches_items for k, v in gradient_dict.items()} for gradient_dict in gradient_dicts]
 
-                            dag_probs, reduction_dag_probs = expit(dag_logits), expit(reduction_dag_logits)
-                            current_average_dag = np.mean(dag_probs)
-                            current_average_dag_reducing = np.mean(reduction_dag_probs)
-                            # print(f"dag_grad_dict {dag_grad_dict}")
-                            # print(f"reduction_dag_grad_dict {reduction_dag_grad_dict}")
-
-                            for i, key in enumerate(all_connections):
-                                if key in dag_grad_dict:
-                                    grad = dag_grad_dict[key]/num_dropout_batches_items - weight_decay*(current_average_dag - target_ave_prob)#*expit(dag_logits[i])
-                                    deriv = sigmoid_derivitive(dag_logits[i])
-
-                                    logit_grad = grad * deriv
-
-                                    # print(logit_grad)
-                                    dag_logits[i] += np.clip(logit_grad, -0.1, 0.1)
-
-                            print("reduction")
-                            for i, key in enumerate(all_connections):
-                                if key in reduction_dag_grad_dict:
-                                    grad = reduction_dag_grad_dict[key]/num_dropout_batches_items - weight_decay*(current_average_dag_reducing - target_ave_prob)#*expit(reduction_dag_logits[i])
-                                    deriv = sigmoid_derivitive(reduction_dag_logits[i])
-
-                                    logit_grad = grad * deriv
-                                    # print(logit_grad)
-                                    reduction_dag_logits[i] += np.clip(logit_grad, -0.1, 0.1)
+                                cnn.update_dag_logits(gradient_dicts, weight_decay=weight_decay, max_grad=0.1)
 
                             get_new_network = True
 
-                            dag_probs, reduction_dag_probs = expit(dag_logits), expit(reduction_dag_logits)
-                            print(f"dag_probs: {dag_probs}")
-                            print(f"reduction_dag_probs: {reduction_dag_probs}")
-
-
-
                         if get_new_network:
 
-                            # print(f"loss: {total_loss/num_batches}")
-                            # print(f"acc: {total_acc/num_batches}")
                             if num_batches > 0:
-                                stuff =[datetime.datetime.now(), "train", total_loss/num_batches, total_acc/num_batches, last_dag, dag_probs.tolist(), reduction_dag_probs.tolist()]
-                                print(stuff)
+                                stuff =[datetime.datetime.now(), "train", total_loss/num_batches, total_acc/num_batches, last_dags, dags_probs.tolist(), reduction_dag_probs.tolist()]
                                 spamwriter.writerow(stuff)
                                 if best_acc < total_acc/num_batches:
                                     best_acc = total_acc / num_batches
-                                    best_dag = last_dag
+                                    best_dag = last_dags
                                 csvfile.flush()
                             total_acc = 0
                             total_loss = 0
@@ -411,57 +367,26 @@ def main():
 
                             sT = start()
 
-                            dag_probs, reduction_dag_probs = expit(dag_logits), expit(reduction_dag_logits)
-                            # dag = sample_valid_dag(dag_probs, reduction_dag_probs, all_connections)
-                            dag = sample_fixed_dag(dag_probs, reduction_dag_probs, all_connections)
-                            print(dag)
+                            dags_probs = cnn.get_dags_probs()
+                            dags = sample_fixed_dags(dags_probs, all_connections)
+
+                            logger.info(dags)
 
                             cnn_optimizer.full_reset_grad()
-                            cnn.to_gpu(dag[0], dag[1])
-                            cnn_optimizer.to(cnn.get_parameters(last_dag[0], last_dag[1]), cpu)
-                            cnn_optimizer.to(cnn.get_parameters(dag[0], dag[1]), gpu)
+                            cnn.to_gpu(dags)
+                            cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
+                            cnn_optimizer.to(cnn.get_parameters(dags), gpu)
 
-                            test_dag = dag
-
-                            last_dag = dag
+                            last_dags = dags
                             dropout_opt.zero_grad()
-                            stop(sT, "to_cuda")
+                            stop(sT, "to_cuda", logger)
                             get_new_network = False
-
                             num_dropout_batches_items = 0
 
-
-                        # if batch_i % 2 == 0:
-                        #     cnn.to_gpu(random_dag_1, random_dag_1)
-                        #     optimizer.to(cnn.get_parameters(random_dag_2, random_dag_2), cpu)
-                        #     # cnn.get_parameters(random_dag_1, random_dag_1)
-                        #     # time.sleep(2)
-                        #     optimizer.to(cnn.get_parameters(random_dag_1, random_dag_1), gpu)
-                        #     dag = random_dag_1
-                        # else:
-                        #     pass
-                        #     cnn.to_gpu(random_dag_2, random_dag_2)
-                        #     optimizer.to(cnn.get_parameters(random_dag_1, random_dag_1), cpu)
-                        #     optimizer.to(cnn.get_parameters(random_dag_2, random_dag_2), gpu)
-                        #     dag = random_dag_2
-
-                        # if batch_i % 3 == 0:
-                        #     dag = dag1
-                        # elif batch_i % 3 == 1:
-                        #     dag = dag2
-                        # else:
-                        #     dag = dag3
-                        # dag = trimmed_random_dag
-
-                        # sT = start()
-                        # cnn.to_gpu(dag, dag)
-                        # stop(sT, "to_cuda")
                         cnn_optimizer.zero_grad()
                         images, labels = data_it
 
-                        # images, labels = images, labels
-
-                        outputs = cnn(images.to(device), dag[0], dag[1])
+                        outputs = cnn(images.to(device), dags)
 
                         max_index = outputs.max(dim=1)[1].cpu().numpy()
                         acc = np.sum(max_index == labels.numpy())/labels.shape[0]
@@ -482,58 +407,30 @@ def main():
                         num_dropout_batches_items += args.batch_size
                         cnn_optimizer.step()
 
-                        loss = None
+                        del loss
                         # print(images.shape)
 
                         total_acc += acc
                         total_loss += loss_value
                         num_batches += 1
 
-                        # print(type(loss))
-                        # print(batch_i)
-                        # tqdm.write(f"loss: {loss}")
-                        # tqdm.write(f"acc: {acc}")
                         t.update(1)
                         t.set_postfix(loss = loss_value, acc = acc, avg_loss = total_loss/num_batches, avg_acc = total_acc/num_batches)
                         if batch_i % 25 == 0:
-                            print(total_acc/num_batches)
-                        # optimizer.to(cnn.get_parameters(dag, dag), cpu)
-                        # optimizer.to(cnn.get_parameters(dag, dag), gpu)
+                            logger.info(loss = loss_value, acc = acc, avg_loss = total_loss/num_batches, avg_acc = total_acc/num_batches)
+
                     except RuntimeError as x:
-                        # gc.collect()
-                        print(x)
-                        traceback.print_exc(file=sys.stdout)
-                        error = True
-                        # print(torch.cuda.memory_allocated())
-                        get_new_network = True
+                        logger.error(x)
+                        exec = traceback.format_exc()
+                        logger.error(exec)
 
-                    if error:
-
-                        # cnn.cpu()
-                        # # cnn_state = copy.deepcopy(cnn.state_dict())
-                        # del cnn, cnn_optimizer, dropout_opt
-                        # while True:
-                        #     try:
-                        #         gc.collect()
-                        #         torch.cuda.empty_cache()
-                        #
-                        #         cnn, cnn_optimizer, dropout_opt = create_cnn()
-                        #     # cnn.load_state_dict(cnn_state)
-                        #
-                        #         get_new_network = True
-                        #         break
-                        #     except RuntimeError as x:
-                        #         print(x)
-                        # error = False
-
-                        # cnn.to(cpu)
                         outputs = None
                         loss = None
-                        cnn.to_gpu([], [])
+                        cnn.to_cpu()
                         cnn_optimizer.full_reset_grad()
                         dropout_opt.full_reset_grad()
                         # cnn_optimizer.to(cnn.parameters(), cpu)
-                        cnn_optimizer.to(cnn.get_parameters(last_dag[0], last_dag[1]), cpu)
+                        cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
                         # dropout_opt.to()
                         # cnn_optimizer.full_reset_grad()
                         dropout_opt.zero_grad()
@@ -558,14 +455,14 @@ def main():
                 total_acc = 0
                 total_loss = 0
 
-                cnn.to_gpu(best_dag[0], best_dag[1])
-                cnn_optimizer.to(cnn.get_parameters(last_dag[0], last_dag[1]), cpu)
-                cnn_optimizer.to(cnn.get_parameters(best_dag[0], best_dag[1]), gpu)
+                cnn.to_gpu(best_dag)
+                cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
+                cnn_optimizer.to(cnn.get_parameters(best_dag), gpu)
 
                 for batch_i, data_it in enumerate(dataset.train, 0):
                     cnn_optimizer.zero_grad()
                     images, labels = data_it
-                    outputs = cnn(images.to(device), best_dag[0], best_dag[1])
+                    outputs = cnn(images.to(device), best_dag)
 
                     max_index = outputs.max(dim=1)[1].cpu().numpy()
                     acc = np.sum(max_index == labels.numpy()) / labels.shape[0]
@@ -590,19 +487,19 @@ def main():
                     if batch_i >= 500:
                         break
 
-                spamwriter.writerow([datetime.datetime.now(), "train", total_loss / num_batches, total_acc / num_batches, last_dag, dag_probs.tolist(),
+                spamwriter.writerow([datetime.datetime.now(), "train", total_loss / num_batches, total_acc / num_batches, last_dags, dags_probs.tolist(),
                                      reduction_dag_probs.tolist()])
-            last_dag = best_dag
+            last_dags = best_dag
             gc.collect()
             correct = 0
             total = 0
             with torch.no_grad():
                 total_loss = 0
                 cnn.eval()
-                cnn_optimizer.to(cnn.get_parameters(last_dag[0], last_dag[1]), cpu)
-                cnn.to_gpu(last_dag[0], last_dag[1])
+                cnn_optimizer.to(cnn.get_parameters(), cpu)
+                cnn.to_gpu(last_dags)
                 for images, labels in dataset.test:
-                    outputs = cnn(images.to(device), last_dag[0], last_dag[1])
+                    outputs = cnn(images.to(device), last_dags)
                     _, predicted = torch.max(outputs.data, 1)
                     total += labels.size(0)
                     correct += (predicted == labels.to(device)).sum().item()
@@ -611,10 +508,111 @@ def main():
                     total_loss += loss.data.item()
 
                 cnn.train()
-            spamwriter.writerow([datetime.datetime.now(), "test", total_loss / total, correct/total, last_dag, dag_probs.tolist(),
+            spamwriter.writerow([datetime.datetime.now(), "test", total_loss / total, correct/total, last_dags, dags_probs.tolist(),
                                   reduction_dag_probs.tolist()])
             csvfile.flush()
 
+            dropout_opt.zero_grad()
+            cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
+            with tqdm(total=2000) as t:
+                gc.collect()
+                get_new_network = True
+                for batch_i, data_it in enumerate(dataset.test, 0):
+                    error = False
+                    try:
+                        if batch_i % 25 == 0 and not get_new_network:
+                            if num_dropout_batches_items > 0:
+                                current_length = next(iter_lengths)
+
+                                gradient_dicts = dropout_opt.step_grad()
+                                gradient_dicts = [{k: v/num_dropout_batches_items for k, v in gradient_dict.items()} for gradient_dict in gradient_dicts]
+
+                                cnn.update_dag_logits(gradient_dicts, weight_decay=weight_decay, max_grad=0.1)
+
+                            get_new_network = True
+
+                        if get_new_network:
+
+                            if num_batches > 0:
+                                stuff =[datetime.datetime.now(), "test-cheating", total_loss/num_batches, total_acc/num_batches, last_dags, dags_probs.tolist(), reduction_dag_probs.tolist()]
+                                spamwriter.writerow(stuff)
+                                if best_acc < total_acc/num_batches:
+                                    best_acc = total_acc / num_batches
+                                    best_dag = last_dags
+                                csvfile.flush()
+                            total_acc = 0
+                            total_loss = 0
+                            num_batches = 0
+
+                            sT = start()
+
+                            dags_probs = cnn.get_dags_probs()
+                            dags = sample_fixed_dags(dags_probs, all_connections)
+
+                            logger.info(dags)
+
+                            cnn.to_gpu(dags)
+
+                            last_dags = dags
+                            dropout_opt.zero_grad()
+                            stop(sT, "to_cuda", logger)
+                            get_new_network = False
+                            num_dropout_batches_items = 0
+
+                        images, labels = data_it
+
+                        outputs = cnn(images.to(device), dags)
+
+                        max_index = outputs.max(dim=1)[1].cpu().numpy()
+                        acc = np.sum(max_index == labels.numpy())/labels.shape[0]
+
+                        # outputs = cnn(images)
+                        loss = criterion(outputs, labels.to(device))
+
+                        del outputs
+
+
+                        loss_value = loss.data.item()
+
+                        # if loss_value > 1000:
+                        #     get_new_network = True
+                        #     continue
+
+                        loss.backward()
+                        num_dropout_batches_items += args.batch_size
+
+                        del loss
+                        # print(images.shape)
+
+                        total_acc += acc
+                        total_loss += loss_value
+                        num_batches += 1
+
+                        t.update(1)
+                        t.set_postfix(loss = loss_value, acc = acc, avg_loss = total_loss/num_batches, avg_acc = total_acc/num_batches)
+                        if batch_i % 25 == 0:
+                            logger.info(loss = loss_value, acc = acc, avg_loss = total_loss/num_batches, avg_acc = total_acc/num_batches)
+
+                    except RuntimeError as x:
+                        logger.error(x)
+                        exec = traceback.format_exc()
+                        logger.error(exec)
+
+                        outputs = None
+                        loss = None
+                        cnn.to_cpu()
+                        dropout_opt.full_reset_grad()
+                        dropout_opt.zero_grad()
+                        get_new_network = True
+
+                        gc.collect()
+                        torch.cuda.empty_cache()
+
+                        print(f"dag_probs: {dag_probs}")
+                        print(f"reduction_dag_probs: {reduction_dag_probs}")
+
+            cnn_optimizer.full_reset_grad()
+            dropout_opt.full_reset_grad()
             print('Accuracy of the network on the 10000 test images: %d %%' % (
                     100 * correct / total))
 

@@ -6,15 +6,14 @@ import os
 
 import numpy as np
 import scipy.signal
-from tensorboard import TensorBoard
 import torch
-from torch import nn
 import torch.nn.parallel
+from torch import nn
 from torch.autograd import Variable
 
-import models
 import utils
-
+from src import models
+from tensorboard import TensorBoard
 
 logger = utils.get_logger()
 

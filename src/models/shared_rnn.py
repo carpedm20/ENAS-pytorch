@@ -1,15 +1,14 @@
 """Module containing the shared RNN model."""
-import numpy as np
 import collections
 
+import numpy as np
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 from torch.autograd import Variable
 
-import models.shared_base
+import src.models.shared_base
 import utils
-
 
 logger = utils.get_logger()
 
@@ -131,10 +130,10 @@ class LockedDropout(nn.Module):
         return mask * x
 
 
-class RNN(models.shared_base.SharedModel):
+class RNN(src.models.shared_base.SharedModel):
     """Shared RNN model."""
     def __init__(self, args, corpus):
-        models.shared_base.SharedModel.__init__(self)
+        src.models.shared_base.SharedModel.__init__(self)
 
         self.args = args
         self.corpus = corpus
@@ -374,8 +373,8 @@ class RNN(models.shared_base.SharedModel):
     def get_num_cell_parameters(self, dag):
         num = 0
 
-        num += models.shared_base.size(self.w_xc)
-        num += models.shared_base.size(self.w_xh)
+        num += src.models.shared_base.size(self.w_xc)
+        num += src.models.shared_base.size(self.w_xh)
 
         q = collections.deque()
         q.append(0)
@@ -396,8 +395,8 @@ class RNN(models.shared_base.SharedModel):
                 w_h = self.w_h[node_id][next_id]
                 w_c = self.w_c[node_id][next_id]
 
-                num += models.shared_base.size(w_h)
-                num += models.shared_base.size(w_c)
+                num += src.models.shared_base.size(w_h)
+                num += src.models.shared_base.size(w_c)
 
                 q.append(next_id)
 

@@ -1,13 +1,10 @@
-import numpy as np
-from collections import defaultdict, deque
-
 import torch as t
-from torch import nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+from scipy.special import expit, logit
+from torch import nn
 
-from models.shared_base import *
-from utils import get_logger, get_variable, keydefaultdict
+from src.models.shared_base import *
+from utils import get_logger
 
 logger = get_logger()
 
@@ -183,8 +180,8 @@ def conv_layer(conv, num_features):
 #             nn.BatchNorm2d(planes, track_running_stats=False),
 #     )
 
-def funct_name(funct):
-    return funct.__name__
+def sigmoid_derivitive(x):
+    return expit(x)*(1.0-expit(x))
 
 class CNNCell(SharedModel):
     class InputInfo:
@@ -327,10 +324,8 @@ class CNN(SharedModel):
         self.dag_variables_dict = {}
         self.reducing_dag_variables_dict = {}
 
-
         last_input_info = CNNCell.InputInfo(input_channels=input_channels, input_width=width)
         current_input_info = CNNCell.InputInfo(input_channels=input_channels, input_width=width)
-
 
         #count connections
         temp_cell = CNNCell(args, input_1_info=last_input_info, input_2_info=current_input_info,
@@ -369,8 +364,21 @@ class CNN(SharedModel):
             # torch.nn.init.constant_(self.out_layer.weight, 0)
             torch.nn.init.constant_(self.out_layer.bias, 0)
 
+        self.all_connections = list(self.cells[0].connections.keys())
+        parent_counts = [0] * (2 + args.num_blocks)
 
-    def forward(self, output, cell_dag, reducing_cell_dag):
+        for idx, jdx, _type in self.all_connections:
+            parent_counts[jdx] += 1
+
+        print(parent_counts)
+
+        probs = np.array(list(2 / parent_counts[jdx] for idx, jdx, _type in self.all_connections))
+        self.dag_logits = (logit(probs), logit(probs))
+
+        self.target_ave_prob = np.mean(probs)
+
+    def forward(self, output, cell_dags):
+        cell_dag, reducing_cell_dag = cell_dags
         last_input, current_input = output, output
 
         for cell in self.cells:
@@ -399,16 +407,38 @@ class CNN(SharedModel):
         for cell in self.cells:
             cell.reset_parameters()
 
-    def to_device(self, device, cell_dag, reducing_cell_dag):
-        for cell in self.cells:
-            if cell.reducing:
-                cell.to_device(device, reducing_cell_dag)
-            else:
-                cell.to_device(device, cell_dag)
+    def update_dag_logits(self, gradient_dicts, weight_decay, max_grad=0.1):
+        dag_grad_dict, reduction_dag_grad_dict = gradient_dicts[0], gradient_dicts[1]
 
-        self.out_layer.to(device)
+        dag_probs = tuple(expit(logit) for logit in self.dag_logits)
 
-    def to_gpu(self, cell_dag, reducing_cell_dag):
+        current_average_dag_probs = tuple(np.mean(prob) for prob in dag_probs)
+
+        for i, key in enumerate(self.all_connections):
+            for grad_dict, current_average_dag_prob, dag_logits in zip(gradient_dicts, current_average_dag_probs, self.dag_logits):
+                if key in dag_grad_dict:
+                    grad = grad_dict[key] - weight_decay * (current_average_dag_prob - self.target_ave_prob)  # *expit(dag_logits[i])
+                    deriv = sigmoid_derivitive(dag_logits[i])
+                    logit_grad = grad * deriv
+                    dag_logits[i] += np.clip(logit_grad, -max_grad, max_grad)
+
+    def get_dags_probs(self):
+        return tuple(expit(logits) for logits in self.dag_logits)
+
+    # def to_device(self, device, cell_dag, reducing_cell_dag):
+    #     for cell in self.cells:
+    #         if cell.reducing:
+    #             cell.to_device(device, reducing_cell_dag)
+    #         else:
+    #             cell.to_device(device, cell_dag)
+    #
+    #     self.out_layer.to(device)
+
+    def to_cpu(self):
+        self.to_gpu(([], []))
+
+    def to_gpu(self, cell_dags):
+        cell_dag, reducing_cell_dag = cell_dags
         cell_dag = set(cell_dag)
         reducing_cell_dag = set(reducing_cell_dag)
         if self.gpu is None:
@@ -426,7 +456,8 @@ class CNN(SharedModel):
             self.to_device(self.cpu_device, cell_dag_to_cpu, reducing_cell_dag_to_cpu)
             self.to_device(self.gpu, cell_dag_to_gpu, reducing_cell_dag_to_gpu)
 
-    def get_parameters(self, dag, reducing_dag):
+    def get_parameters(self, dags):
+        dag, reducing_dag = dags
         params = []
         for cell in self.cells:
             if cell.reducing:

@@ -1,13 +1,11 @@
 """Entry point."""
-import os
 
 import torch
 
-import data
 import config
-import utils
-import trainer
 import conv_trainer
+import trainer
+import utils
 
 logger = utils.get_logger()
 
@@ -22,9 +20,9 @@ def main(args):  # pylint:disable=redefined-outer-name
         torch.cuda.manual_seed(args.random_seed)
 
     if args.network_type == 'rnn':
-        dataset = data.text.Corpus(args.data_path)
+        dataset = src.data.text.Corpus(args.data_path)
     elif args.dataset == 'cifar10':
-        dataset = data.image.Image(args)
+        dataset = src.data.image.Image(args)
     else:
         raise NotImplementedError(f"{args.dataset} is not supported")
 
