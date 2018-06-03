@@ -26,6 +26,7 @@ import logging
 import shutil
 
 from dag import *
+from utils1 import *
 
 def get_logger(save_path):
     logger = logging.getLogger('ENAS')
@@ -48,28 +49,6 @@ def get_logger(save_path):
     logger.addHandler(debugFH)
     logger.addHandler(ch)
     return logger
-
-def to_string(**kwargs):
-    return ' '.join([f"{k}:{v}" for k, v in kwargs.items()])
-
-class Flatten(nn.Module):
-    def forward(self, input):
-        return input.view(input.size(0), -1)
-
-class Timer:
-    def __init__(self, debugText="", print_funct: types.FunctionType = print):
-        self.debugText = debugText
-        self.print_funct = print_funct
-
-    def __enter__(self):
-        self.start = time.clock()
-        return self
-
-    def __exit__(self, *args):
-        self.end = time.clock()
-        self.interval = self.end - self.start
-        message = f"{self.debugText} Diff={self.interval}"
-        self.print_funct(message)
 
 def main():
     load_path = None
@@ -418,8 +397,6 @@ def main():
                 cnn_optimizer.full_reset_grad()
                 dropout_opt.zero_grad()
                 dropout_opt.full_reset_grad()
-
-
 
 
 if __name__ == "__main__":
