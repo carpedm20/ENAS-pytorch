@@ -49,36 +49,9 @@ def get_logger(save_path):
 def to_string(**kwargs):
     return ' '.join([f"{k}:{v}" for k, v in kwargs.items()])
 
-
-
 class Flatten(nn.Module):
     def forward(self, input):
         return input.view(input.size(0), -1)
-
-def test_cell():
-    return nn.Sequential(
-        shared_cnn.conv3x3(64, 64, 1),
-        shared_cnn.conv3x3(64, 64, 1),
-        shared_cnn.conv3x3(64, 64, 1),
-        shared_cnn.conv3x3(64, 64, 1),
-        shared_cnn.conv3x3(64, 64, 1)
-    )
-
-def test_model():
-    return nn.Sequential(
-        nn.Conv2d(3, 64, 3),
-        test_cell(),
-        shared_cnn.conv3x3(64, 64, 2),
-        test_cell(),
-        shared_cnn.conv3x3(64, 64, 1),
-        test_cell(),
-        shared_cnn.conv3x3(64, 64, 2),
-        test_cell(),
-        shared_cnn.conv3x3(64, 64, 1),
-        test_cell(),
-        Flatten(),
-        nn.Linear(64 * (32//2//2)**2, 10)
-    )
 
 def start():
     return time.clock()
@@ -121,10 +94,8 @@ def trim_dag(dag: list, start_nodes: set, output_node=None):
     return new_dag
 
 def main():
-    # load_path = "./test_save_32_eh"
-    # load_path = "./test_save_39_new_1"
     load_path = None
-    save_path = "./logs/new/test_save_52"
+    save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     os.makedirs(save_path)
     shutil.copytree(os.path.dirname(os.path.realpath(__file__)), os.path.join(save_path, 'src'))
@@ -154,53 +125,20 @@ def main():
 
     weight_decay = 5e-1
 
-
-    # cnn = test_model()
-    # cnn.to(device)
-
-    # torch.save(cnn.state_dict(), save_path)
-    #
     if load_path:
         cnn.load(load_path)
 
     criterion = nn.CrossEntropyLoss()
 
-    # sT = start()
-    # dropout_opt = DropoutSGD([cnn.dag_variables, cnn.reducing_dag_variables], connections = cnn.all_connections, lr=0.1, weight_decay=1e-4)
-    #
-    # # optimizer = optim.Adam(cnn.parameters(), lr=0.0001)
-    # optimizer = AdamShared(cnn.parameters(), lr=0.0001, weight_decay=1e-5)
-    # stop(sT, "optimizer")
-    # print('parameters', list(cnn.parameters()))
-
     dataset = data.image.Image(args)
-
-    # train_iter = iter(dataset.train)
 
     all_connections = list(cnn.cells[0].connections.keys())
     parent_counts = [0]*(2+args.num_blocks)
-    # for jdx in range(2, 2 + args.num_blocks):
-
 
     for idx, jdx, _type in all_connections:
         parent_counts[jdx] += 1
 
     print(parent_counts)
-
-    dags_probs = np.array(list(2/parent_counts[jdx] for idx, jdx, _type in all_connections))
-    reduction_dag_probs = np.array(dags_probs)
-
-    # print(dag_probs)
-
-
-
-    # dag_logits = logit(np.array([1/len(shared_cnn.CNNCell.default_layer_types)] * len(all_connections)))
-    # reduction_dag_logits = np.array(dag_logits)
-
-    # target_ave_prob = 1/len(shared_cnn.CNNCell.default_layer_types)
-    target_ave_prob = np.mean(dags_probs)
-    print("target_ave_prob", target_ave_prob)
-
 
     def sample(probs):
         random_nums = np.random.rand(len(probs))
@@ -349,7 +287,7 @@ def main():
                             get_new_network = True
 
                         if get_new_network:
-
+                            dags_probs = cnn.get_dags_probs()
                             if num_batches > 0:
                                 stuff =[datetime.datetime.now(), "train", total_loss/num_batches, total_acc/num_batches, last_dags, dags_probs[0].tolist(), dags_probs[1].tolist()]
                                 spamwriter.writerow(stuff)
@@ -362,8 +300,6 @@ def main():
                             num_batches = 0
 
                             sT = start()
-
-                            dags_probs = cnn.get_dags_probs()
                             dags = sample_fixed_dags(dags_probs, all_connections)
 
                             logger.info(dags)
@@ -435,10 +371,6 @@ def main():
                         gc.collect()
                         torch.cuda.empty_cache()
 
-                        #print(f"dag_probs: {dags_probs}")
-                        #print(f"reduction_dag_probs: {reduction_dag_probs}")
-
-
             cnn.save(save_path)
             cnn_optimizer.full_reset_grad()
             dropout_opt.full_reset_grad()
@@ -483,8 +415,7 @@ def main():
                     if batch_i >= 250:
                         break
 
-                spamwriter.writerow([datetime.datetime.now(), "train", total_loss / num_batches, total_acc / num_batches, last_dags, dags_probs[0].tolist(),
-                                     dags_probs[1].tolist()])
+                spamwriter.writerow([datetime.datetime.now(), "train", total_loss / num_batches, total_acc / num_batches, last_dags])
             cnn_optimizer.full_reset_grad()
             last_dags = best_dag
             gc.collect()
@@ -510,10 +441,9 @@ def main():
                     del loss
 
                 cnn.train()
-            spamwriter.writerow([datetime.datetime.now(), "test", total_loss / total, correct/total, last_dags, dags_probs[0].tolist(),
-                                 dags_probs[1].tolist()])
-            print('Accuracy of the network on the 10000 test images: %d %%' % (100 * correct / total))
+            spamwriter.writerow([datetime.datetime.now(), "test", total_loss / total, correct/total, last_dags])
             csvfile.flush()
+            logger.info('Accuracy of the network on the 10000 test images: %d %%' % (100 * correct / total))
 
             gc.collect()
             dropout_opt.zero_grad()
@@ -542,6 +472,7 @@ def main():
                                 cnn_optimizer.full_reset_grad()
                                 dropout_opt.full_reset_grad()
 
+                                dags_probs = cnn.get_dags_probs()
                                 if num_batches > 0:
                                     stuff =[datetime.datetime.now(), "test-cheating", total_loss/num_batches, total_acc/num_batches, last_dags, dags_probs[0].tolist(), dags_probs[1].tolist()]
                                     spamwriter.writerow(stuff)
@@ -553,7 +484,6 @@ def main():
 
                                 sT = start()
 
-                                dags_probs = cnn.get_dags_probs()
                                 dags = sample_fixed_dags(dags_probs, all_connections)
 
                                 logger.info(dags)
