@@ -20,9 +20,9 @@ def main(args):  # pylint:disable=redefined-outer-name
         torch.cuda.manual_seed(args.random_seed)
 
     if args.network_type == 'rnn':
-        dataset = src.data.text.Corpus(args.data_path)
+        dataset = data.text.Corpus(args.data_path)
     elif args.dataset == 'cifar10':
-        dataset = src.data.image.Image(args)
+        dataset = data.image.Image(args)
     else:
         raise NotImplementedError(f"{args.dataset} is not supported")
 

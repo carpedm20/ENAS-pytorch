@@ -1,9 +1,12 @@
+import os
+import pickle
+
 import torch as t
 import torch.nn.functional as F
 from scipy.special import expit, logit
 from torch import nn
 
-from src.models.shared_base import *
+from models.shared_base import *
 from utils import get_logger
 
 logger = get_logger()
@@ -373,7 +376,7 @@ class CNN(SharedModel):
         print(parent_counts)
 
         probs = np.array(list(2 / parent_counts[jdx] for idx, jdx, _type in self.all_connections))
-        self.dag_logits = (logit(probs), logit(probs))
+        self.dags_logits = (logit(probs), logit(probs))
 
         self.target_ave_prob = np.mean(probs)
 
@@ -410,12 +413,12 @@ class CNN(SharedModel):
     def update_dag_logits(self, gradient_dicts, weight_decay, max_grad=0.1):
         dag_grad_dict, reduction_dag_grad_dict = gradient_dicts[0], gradient_dicts[1]
 
-        dag_probs = tuple(expit(logit) for logit in self.dag_logits)
+        dag_probs = tuple(expit(logit) for logit in self.dags_logits)
 
         current_average_dag_probs = tuple(np.mean(prob) for prob in dag_probs)
 
         for i, key in enumerate(self.all_connections):
-            for grad_dict, current_average_dag_prob, dag_logits in zip(gradient_dicts, current_average_dag_probs, self.dag_logits):
+            for grad_dict, current_average_dag_prob, dag_logits in zip(gradient_dicts, current_average_dag_probs, self.dags_logits):
                 if key in dag_grad_dict:
                     grad = grad_dict[key] - weight_decay * (current_average_dag_prob - self.target_ave_prob)  # *expit(dag_logits[i])
                     deriv = sigmoid_derivitive(dag_logits[i])
@@ -423,16 +426,16 @@ class CNN(SharedModel):
                     dag_logits[i] += np.clip(logit_grad, -max_grad, max_grad)
 
     def get_dags_probs(self):
-        return tuple(expit(logits) for logits in self.dag_logits)
+        return tuple(expit(logits) for logits in self.dags_logits)
 
-    # def to_device(self, device, cell_dag, reducing_cell_dag):
-    #     for cell in self.cells:
-    #         if cell.reducing:
-    #             cell.to_device(device, reducing_cell_dag)
-    #         else:
-    #             cell.to_device(device, cell_dag)
-    #
-    #     self.out_layer.to(device)
+    def to_device(self, device, cell_dag, reducing_cell_dag):
+        for cell in self.cells:
+            if cell.reducing:
+                cell.to_device(device, reducing_cell_dag)
+            else:
+                cell.to_device(device, cell_dag)
+
+        self.out_layer.to(device)
 
     def to_cpu(self):
         self.to_gpu(([], []))
@@ -468,5 +471,13 @@ class CNN(SharedModel):
         return params
 
 
+    def load(self, load_path):
+        self.load_state_dict(torch.load(os.path.join(load_path, "cnn_model")))
+        with open(os.path.join(load_path, "dags_logits.pickle"), 'rb') as f:
+            self.dags_logits = pickle.load(f)
 
+    def save(self, save_path):
+        torch.save(self.state_dict(), os.path.join(save_path, "cnn_model"))
+        with open(os.path.join(save_path, "dags_logits.pickle"), 'wb') as f:
+            pickle.dump(self.dags_logits, f)
 

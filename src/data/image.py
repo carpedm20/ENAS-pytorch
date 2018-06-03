@@ -34,7 +34,7 @@ class Image(object):
                 transforms.ToTensor(),
                 normalize,
             ])),
-            batch_size=args.batch_size, shuffle=False,
+            batch_size=args.batch_size, shuffle=True,
             num_workers=args.num_workers, pin_memory=True)
 
         self.test = self.valid
