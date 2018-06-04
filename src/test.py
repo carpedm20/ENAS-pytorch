@@ -11,7 +11,7 @@ from models import shared_cnn
 from models.shared_cnn import CNN
 from scipy.special import logit
 from torch import nn
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 import config_conv
 from adam_shared import AdamShared
@@ -73,7 +73,7 @@ def main():
         with Timer("Optimizer Construct", logger.debug):
             dropout_opt = DropoutSGD([cnn.dag_variables, cnn.reducing_dag_variables], connections=cnn.all_connections,
                                      lr=8*25*20, weight_decay=0)
-            cnn_optimizer = AdamShared(cnn.parameters(), lr=0.00001, weight_decay=1e-5)
+            cnn_optimizer = AdamShared(cnn.parameters(), lr=0.00001, weight_decay=1e-5, gpu=gpu)
 
         return cnn, cnn_optimizer, dropout_opt
 
@@ -124,7 +124,7 @@ def main():
             best_acc = 0
             print('epoch', epoch)
 
-            with tqdm(total=2000) as t:
+            with tqdm(total=2000, desc='train') as t:
                 gc.collect()
                 get_new_network = True
                 for batch_i, (images, labels) in enumerate(dataset.train, 0):
@@ -153,23 +153,34 @@ def main():
                                 cnn_optimizer.zero_grad()
                                 dropout_opt.zero_grad()
                                 test_iterations = 25
-                                for batch_num in tqdm(range(1, 1+test_iterations)):
+                                total_acc = 0
+                                total_loss = 0
+                                # with trange(1, 1+test_iterations, desc='test', leave=False) as t1:
+                                for batch_num in range(1, 1 + test_iterations):
                                     try:
-                                        images, labels = next(test_iter)
+                                        img, lab = next(test_iter)
                                     except StopIteration:
                                         test_iter = iter(dataset.test)
-                                        images, labels = next(test_iter)
+                                        img, lab = next(test_iter)
 
-                                    outputs = cnn(images.to_device(device), dags)
+                                    outputs = cnn(img.to(device), dags)
                                     max_index = outputs.max(dim=1)[1].cpu().numpy()
-                                    acc = np.sum(max_index == labels.numpy()) / labels.shape[0]
+                                    acc = np.sum(max_index == lab.numpy()) / lab.shape[0]
                                     # outputs = cnn(images)
-                                    loss = criterion(outputs, labels.to_device(device))
+                                    loss = criterion(outputs, lab.to(device))
                                     loss_value = loss.data.item()
                                     loss.backward()
 
-                                    t.set_postfix(test=True, loss=loss_value, acc=acc, avg_loss=total_loss / batch_num,
-                                                  avg_acc=total_acc / batch_num)
+                                    total_acc += acc
+                                    total_loss += loss_value
+
+                                    loss = None
+                                    outputs = None
+                                    img = None
+                                    lab = None
+
+                                    # t1.set_postfix(loss=loss_value, acc=acc, avg_loss=total_loss / batch_num,
+                                    #               avg_acc=total_acc / batch_num)
 
 
                                 gradient_dicts = dropout_opt.step_grad()
@@ -206,13 +217,13 @@ def main():
 
 
                         cnn_optimizer.zero_grad()
-                        outputs = cnn(images.to_device(device), dags)
+                        outputs = cnn(images.to(device), dags)
 
                         max_index = outputs.max(dim=1)[1].cpu().numpy()
                         acc = np.sum(max_index == labels.numpy())/labels.shape[0]
 
                         # outputs = cnn(images)
-                        loss = criterion(outputs, labels.to_device(device))
+                        loss = criterion(outputs, labels.to(device))
 
                         loss_value = loss.data.item()
                         loss.backward()
@@ -258,12 +269,12 @@ def main():
                 for batch_i, data_it in enumerate(dataset.train, 0):
                     cnn_optimizer.zero_grad()
                     images, labels = data_it
-                    outputs = cnn(images.to_device(device), best_dag)
+                    outputs = cnn(images.to(device), best_dag)
 
                     max_index = outputs.max(dim=1)[1].cpu().numpy()
                     acc = np.sum(max_index == labels.numpy()) / labels.shape[0]
 
-                    loss = criterion(outputs, labels.to_device(device))
+                    loss = criterion(outputs, labels.to(device))
 
                     del outputs
 
@@ -271,7 +282,7 @@ def main():
 
                     loss.backward()
                     del loss
-                    num_dropout_batches_items += args.batch_size
+                    # num_dropout_batches_items += args.batch_size
                     cnn_optimizer.step()
 
                     total_acc += acc
@@ -284,9 +295,8 @@ def main():
                     if batch_i >= 50:
                         break
 
-                spamwriter.writerow([datetime.datetime.now(), "train", total_loss / num_batches, total_acc / num_batches, last_dags])
+                spamwriter.writerow([datetime.datetime.now(), "train", total_loss / num_batches, total_acc / num_batches, best_dag])
             cnn_optimizer.full_reset_grad()
-            last_dags = best_dag
             gc.collect()
             correct = 0
             total = 0
@@ -294,13 +304,13 @@ def main():
                 total_loss = 0
                 cnn.eval()
                 cnn_optimizer.to_cpu()
-                cnn.to_gpu(last_dags)
+                cnn.to_gpu(best_dag)
                 for images, labels in dataset.test:
-                    outputs = cnn(images.to_device(device), last_dags)
+                    outputs = cnn(images.to(device), best_dag)
                     _, predicted = torch.max(outputs.data, 1)
                     total += labels.size(0)
-                    correct += (predicted == labels.to_device(device)).sum().item()
-                    loss = criterion(outputs, labels.to_device(device))
+                    correct += (predicted == labels.to(device)).sum().item()
+                    loss = criterion(outputs, labels.to(device))
                     del outputs
 
                     del _
@@ -310,7 +320,7 @@ def main():
                     del loss
 
                 cnn.train()
-            spamwriter.writerow([datetime.datetime.now(), "test", total_loss / total, correct/total, last_dags])
+            spamwriter.writerow([datetime.datetime.now(), "test", total_loss / total, correct/total, best_dag])
             csvfile.flush()
             logger.info('Accuracy of the network on the 10000 test images: %d %%' % (100 * correct / total))
 

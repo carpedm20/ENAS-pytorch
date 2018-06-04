@@ -293,7 +293,7 @@ class CNNCell(SharedModel):
 
     def to_device(self, device, dag):
         for source, target, type_name in dag:
-            self.connections[(source, target, type_name)].to_device(device)
+            self.connections[(source, target, type_name)].to(device)
 
     def get_parameters(self, dag):
         params = []

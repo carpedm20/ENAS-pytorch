@@ -1,4 +1,6 @@
 import math
+import typing
+
 import torch
 from torch.optim import Optimizer
 # from .optimizer import Optimizer
@@ -42,7 +44,7 @@ class AdamShared(Optimizer):
         super(AdamShared, self).__init__(params, defaults)
 
         self.gpu_device = gpu
-        self.gpu_parameters = set()
+        self.gpu_params = set()
         self.cpu_device = torch.device("cpu")
 
     def __setstate__(self, state):
@@ -50,7 +52,7 @@ class AdamShared(Optimizer):
         for group in self.param_groups:
             group.setdefault('amsgrad', False)
 
-    def __to_device(self, params, device):
+    def __to_device(self, device, params):
         param_groups = list(params)
         if len(param_groups) == 0:
             return
@@ -62,10 +64,11 @@ class AdamShared(Optimizer):
                 state = self.state[p]
                 for key in state:
                     if not isinstance(state[key], int):
-                        state[key] = state[key].to_device(device)
+                        state[key] = state[key].to(device)
                 # self.add_param_group(param_group)
 
-    def to_gpu(self, params: set):
+    def to_gpu(self, params: typing.Iterable):
+        params = set(params)
         if self.gpu_device is None:
             raise Exception("No GPU given")
         else:
