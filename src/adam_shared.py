@@ -28,7 +28,7 @@ class AdamShared(Optimizer):
     """
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0, amsgrad=False):
+                 weight_decay=0, amsgrad=False, gpu=None):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
@@ -41,12 +41,16 @@ class AdamShared(Optimizer):
                         weight_decay=weight_decay, amsgrad=amsgrad)
         super(AdamShared, self).__init__(params, defaults)
 
+        self.gpu_device = gpu
+        self.gpu_parameters = set()
+        self.cpu_device = torch.device("cpu")
+
     def __setstate__(self, state):
         super(AdamShared, self).__setstate__(state)
         for group in self.param_groups:
             group.setdefault('amsgrad', False)
 
-    def to(self, params, device):
+    def __to_device(self, params, device):
         param_groups = list(params)
         if len(param_groups) == 0:
             return
@@ -58,9 +62,22 @@ class AdamShared(Optimizer):
                 state = self.state[p]
                 for key in state:
                     if not isinstance(state[key], int):
-                        state[key] = state[key].to(device)
+                        state[key] = state[key].to_device(device)
                 # self.add_param_group(param_group)
 
+    def to_gpu(self, params: set):
+        if self.gpu_device is None:
+            raise Exception("No GPU given")
+        else:
+            params_to_gpu = params - self.gpu_params
+            params_to_cpu = self.gpu_params - params
+
+            self.gpu_params = params
+            self.__to_device(self.gpu_device, params_to_gpu)
+            self.__to_device(self.cpu_device, params_to_cpu)
+
+    def to_cpu(self):
+        self.to_gpu(set())
 
     def step(self, closure=None):
         """Performs a single optimization step.

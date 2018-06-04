@@ -293,7 +293,7 @@ class CNNCell(SharedModel):
 
     def to_device(self, device, dag):
         for source, target, type_name in dag:
-            self.connections[(source, target, type_name)].to(device)
+            self.connections[(source, target, type_name)].to_device(device)
 
     def get_parameters(self, dag):
         params = []
@@ -428,7 +428,7 @@ class CNN(SharedModel):
     def get_dags_probs(self):
         return tuple(expit(logits) for logits in self.dags_logits)
 
-    def to_device(self, device, cell_dag, reducing_cell_dag):
+    def __to_device(self, device, cell_dag, reducing_cell_dag):
         for cell in self.cells:
             if cell.reducing:
                 cell.to_device(device, reducing_cell_dag)
@@ -456,8 +456,8 @@ class CNN(SharedModel):
             self.gpu_reducing_dag = reducing_cell_dag
             self.gpu_dag = cell_dag
 
-            self.to_device(self.cpu_device, cell_dag_to_cpu, reducing_cell_dag_to_cpu)
-            self.to_device(self.gpu, cell_dag_to_gpu, reducing_cell_dag_to_gpu)
+            self.__to_device(self.cpu_device, cell_dag_to_cpu, reducing_cell_dag_to_cpu)
+            self.__to_device(self.gpu, cell_dag_to_gpu, reducing_cell_dag_to_gpu)
 
     def get_parameters(self, dags):
         dag, reducing_dag = dags

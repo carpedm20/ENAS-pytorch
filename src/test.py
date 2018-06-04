@@ -101,8 +101,6 @@ def main():
     total_loss = 0
     total_acc = 0
 
-    last_dags = ([], [])
-
     def lengths():
         for i in range(10000):
             yield min(50 + i//100, 250)
@@ -113,7 +111,6 @@ def main():
     iter_lengths = lengths()
 
     current_length = next(iter_lengths)
-    num_dropout_batches_items = 1
 
     with open(os.path.join(save_path, "log.csv"), 'w', newline='') as csvfile:
         spamwriter = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
@@ -127,77 +124,58 @@ def main():
             with tqdm(total=2000) as t:
                 gc.collect()
                 get_new_network = True
-                for batch_i, data_it in enumerate(dataset.train, 0):
-                    # if batch_i == 100:
-                    #     break
-                    error = False
-
+                for batch_i, (images, labels) in enumerate(dataset.train, 0):
+                    outputs = None
+                    loss = None
                     try:
                         if batch_i % current_length == 0 and not get_new_network:
-                            if num_dropout_batches_items > 0:
+                            if num_batches > 0:
                                 current_length = next(iter_lengths)
 
                                 gradient_dicts = dropout_opt.step_grad()
-                                gradient_dicts = [{k: v/num_dropout_batches_items for k, v in gradient_dict.items()} for gradient_dict in gradient_dicts]
-
+                                gradient_dicts = [{k: v/(num_batches*args.batch_size) for k, v in gradient_dict.items()} for gradient_dict in gradient_dicts]
                                 cnn.update_dag_logits(gradient_dicts, weight_decay=weight_decay, max_grad=0.1)
 
+                                stuff = [datetime.datetime.now(), "train", epoch, batch_i, total_loss / num_batches,
+                                         total_acc / num_batches, dags, dags_probs[0].tolist(), dags_probs[1].tolist()]
+                                spamwriter.writerow(stuff)
+                                logger.info(stuff)
+
+                                if best_acc < total_acc / num_batches:
+                                    best_acc = total_acc / num_batches
+                                    best_dag = dags
+                                csvfile.flush()
                             get_new_network = True
 
                         if get_new_network:
-                            dags_probs = cnn.get_dags_probs()
-                            if num_batches > 0:
-                                stuff =[datetime.datetime.now(), "train", total_loss/num_batches, total_acc/num_batches, last_dags, dags_probs[0].tolist(), dags_probs[1].tolist()]
-                                spamwriter.writerow(stuff)
-                                if best_acc < total_acc/num_batches:
-                                    best_acc = total_acc / num_batches
-                                    best_dag = last_dags
-                                csvfile.flush()
                             total_acc = 0
                             total_loss = 0
                             num_batches = 0
+                            get_new_network = False
 
+
+                            dags_probs = cnn.get_dags_probs()
                             with Timer("to_cuda", logger.info):
                                 dags = sample_fixed_dags(dags_probs, all_connections, args.num_blocks)
 
-                                logger.info(dags)
-
                                 cnn_optimizer.full_reset_grad()
                                 cnn.to_gpu(dags)
-                                cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
-                                cnn_optimizer.to(cnn.get_parameters(dags), gpu)
-
-                                last_dags = dags
+                                cnn_optimizer.to_gpu(cnn.get_parameters(dags))
                                 dropout_opt.zero_grad()
-                            get_new_network = False
-                            num_dropout_batches_items = 0
+
 
                         cnn_optimizer.zero_grad()
-                        images, labels = data_it
-
-                        outputs = cnn(images.to(device), dags)
+                        outputs = cnn(images.to_device(device), dags)
 
                         max_index = outputs.max(dim=1)[1].cpu().numpy()
                         acc = np.sum(max_index == labels.numpy())/labels.shape[0]
 
                         # outputs = cnn(images)
-                        loss = criterion(outputs, labels.to(device))
-
-                        del outputs
-
+                        loss = criterion(outputs, labels.to_device(device))
 
                         loss_value = loss.data.item()
-
-                        # if loss_value > 1000:
-                        #     get_new_network = True
-                        #     continue
-
                         loss.backward()
-                        num_dropout_batches_items += args.batch_size
                         cnn_optimizer.step()
-
-                        del loss
-                        # print(images.shape)
 
                         total_acc += acc
                         total_loss += loss_value
@@ -205,12 +183,10 @@ def main():
 
                         t.update(1)
                         t.set_postfix(loss = loss_value, acc = acc, avg_loss = total_loss/num_batches, avg_acc = total_acc/num_batches)
-                        if batch_i % 25 == 0:
-                            logger.info(to_string(loss = loss_value, acc = acc, avg_loss = total_loss/num_batches, avg_acc = total_acc/num_batches))
 
                     except RuntimeError as x:
-                        logger.error(x)
                         exec = traceback.format_exc()
+                        logger.error(x)
                         logger.error(exec)
 
                         outputs = None
@@ -218,13 +194,9 @@ def main():
                         cnn.to_cpu()
                         cnn_optimizer.full_reset_grad()
                         dropout_opt.full_reset_grad()
-                        # cnn_optimizer.to(cnn.parameters(), cpu)
-                        cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
-                        # dropout_opt.to()
-                        # cnn_optimizer.full_reset_grad()
-                        dropout_opt.zero_grad()
-                        get_new_network = True
 
+                        cnn_optimizer.to_cpu()
+                        get_new_network = True
                         gc.collect()
                         torch.cuda.empty_cache()
 
@@ -240,18 +212,17 @@ def main():
                 total_loss = 0
 
                 cnn.to_gpu(best_dag)
-                cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
-                cnn_optimizer.to(cnn.get_parameters(best_dag), gpu)
+                cnn_optimizer.to_gpu(cnn.get_parameters(best_dag))
 
                 for batch_i, data_it in enumerate(dataset.train, 0):
                     cnn_optimizer.zero_grad()
                     images, labels = data_it
-                    outputs = cnn(images.to(device), best_dag)
+                    outputs = cnn(images.to_device(device), best_dag)
 
                     max_index = outputs.max(dim=1)[1].cpu().numpy()
                     acc = np.sum(max_index == labels.numpy()) / labels.shape[0]
 
-                    loss = criterion(outputs, labels.to(device))
+                    loss = criterion(outputs, labels.to_device(device))
 
                     del outputs
 
@@ -281,14 +252,14 @@ def main():
             with torch.no_grad():
                 total_loss = 0
                 cnn.eval()
-                cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
+                cnn_optimizer.to_cpu()
                 cnn.to_gpu(last_dags)
                 for images, labels in dataset.test:
-                    outputs = cnn(images.to(device), last_dags)
+                    outputs = cnn(images.to_device(device), last_dags)
                     _, predicted = torch.max(outputs.data, 1)
                     total += labels.size(0)
-                    correct += (predicted == labels.to(device)).sum().item()
-                    loss = criterion(outputs, labels.to(device))
+                    correct += (predicted == labels.to_device(device)).sum().item()
+                    loss = criterion(outputs, labels.to_device(device))
                     del outputs
 
                     del _
@@ -305,7 +276,8 @@ def main():
             gc.collect()
             dropout_opt.zero_grad()
             dropout_opt.full_reset_grad()
-            cnn_optimizer.to(cnn.get_parameters(last_dags), cpu)
+            cnn_optimizer.to_cpu()
+            cnn_optimizer.full_reset_grad()
             for i in range(6):
                 with tqdm(total=2000) as t:
                     gc.collect()
@@ -353,13 +325,13 @@ def main():
 
                             images, labels = data_it
 
-                            outputs = cnn(images.to(device), dags)
+                            outputs = cnn(images.to_device(device), dags)
 
                             max_index = outputs.max(dim=1)[1].cpu().numpy()
                             acc = np.sum(max_index == labels.numpy())/labels.shape[0]
 
                             # outputs = cnn(images)
-                            loss = criterion(outputs, labels.to(device))
+                            loss = criterion(outputs, labels.to_device(device))
 
                             del outputs
 

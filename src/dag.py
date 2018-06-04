@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.models import shared_cnn
+from models import shared_cnn
 
 def sample(probs):
     random_nums = np.random.rand(len(probs))
