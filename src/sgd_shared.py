@@ -1,15 +1,18 @@
 import typing
-
 import torch
-from torch.optim import Optimizer, Adam
+from torch.optim import Optimizer, Adam, SGD
+from torch.optim.optimizer import required
 
-class AdamShared(Adam):
+
+class SGDShared(SGD):
     """
     SharedAdamOptimizer
     """
 
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, amsgrad=False, gpu=None):
-        super().__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+    def __init__(self, params, lr=required, momentum=0, dampening=0,
+                 weight_decay=0, nesterov=False, gpu=None):
+        super().__init__(params, lr=lr, momentum=momentum, dampening=dampening,
+                         weight_decay=weight_decay, nesterov=nesterov)
         self.gpu_device = gpu
         self.gpu_params = set()
         self.cpu_device = torch.device("cpu")

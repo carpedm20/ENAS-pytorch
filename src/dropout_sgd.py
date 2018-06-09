@@ -168,9 +168,11 @@ class DropoutSGD(Optimizer):
                         d_p = buf
 
                 gradient = (-group['lr']*d_p).data.tolist()
+                print(gradient)
 
                 for i, key in enumerate(self.connections):
-                    step_dict[key] = gradient[i]
+                    if gradient[i] != 0:
+                        step_dict[key] = gradient[i]
                 # p.data.add_(-group['lr'], d_p)
 
         return steps_dicts

@@ -105,30 +105,43 @@ def conv7x7(in_planes, out_planes, stride=1):
 def avg3x3(in_planes, out_planes, stride=1):
     if in_planes != out_planes:
         return fix_layers(in_planes, out_planes, stride, avg3x3)
-        # return nn.Sequential(depthwise_1x1(in_planes, out_planes, 1), avg3x3(out_planes, out_planes, stride=1))
     else:
         return nn.AvgPool2d(3, stride=stride, padding=1)
 
 def max3x3(in_planes, out_planes, stride=1):
     if in_planes != out_planes:
         return fix_layers(in_planes, out_planes, stride, max3x3)
-        # return depthwise_3x3(in_planes, out_planes, stride)
     else:
         return nn.MaxPool2d(3, stride=stride, padding=1)
 
 def max5x5(in_planes, out_planes, stride=1):
     if in_planes != out_planes:
         return fix_layers(in_planes, out_planes, stride, max5x5)
-        # return depthwise_5x5(in_planes, out_planes, stride)
     else:
         return nn.MaxPool2d(5, stride=stride, padding=2)
 
 def max7x7(in_planes, out_planes, stride=1):
     if in_planes != out_planes:
         return fix_layers(in_planes, out_planes, stride, max7x7)
-        # return depthwise_5x5(in_planes, out_planes, stride)
     else:
         return nn.MaxPool2d(5, stride=stride, padding=2)
+
+def initialize_weights(m):
+
+    for layer in m.modules():
+            # initialize_weights(m)
+        if isinstance(layer, nn.Conv2d):
+                nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0)
+        elif isinstance(layer, nn.BatchNorm2d):
+            nn.init.constant_(layer.weight, 1)
+            nn.init.constant_(layer.bias, 0)
+        elif isinstance(layer, nn.AvgPool2d) or isinstance(layer, nn.MaxPool2d) or isinstance(layer, IdentityModule) or isinstance(layer, nn.Sequential):
+            pass
+        else:
+            raise Exception("Unsupported Layer Type")
 
 class IdentityModule(nn.AvgPool2d):
     def __init__(self, stride, stack=1):
@@ -233,6 +246,7 @@ class CNNCell(SharedModel):
                     out_planes = output_channels
                     # print((idx, jdx, _type), (in_planes, out_planes))
                     self.connections[(idx, jdx, _type.__name__)] = _type(in_planes=in_planes, out_planes=out_planes, stride=stride)
+                    initialize_weights(self.connections[(idx, jdx, _type.__name__)])
                     # self.connections[idx][jdx][_type] = _type(in_planes=in_planes, out_planes=out_planes, stride=stride)
                     self.add_module(f'{idx}-{jdx}-{_type.__name__}', self.connections[(idx,jdx,_type.__name__)])
 
@@ -365,9 +379,10 @@ class CNN(SharedModel):
             # self.out_layer.weight.data.zero_()
             # self.out_layer.bias.data.zero_()
             # torch.nn.init.constant_(self.out_layer.weight, 0)
+            torch.nn.init.kaiming_normal_(self.out_layer.weight, mode='fan_out', nonlinearity='relu')
             torch.nn.init.constant_(self.out_layer.bias, 0)
 
-        self.all_connections = list(self.cells[0].connections.keys())
+        # self.all_connections = list(self.cells[0].connections.keys())
         parent_counts = [0] * (2 + args.num_blocks)
 
         for idx, jdx, _type in self.all_connections:
@@ -411,15 +426,16 @@ class CNN(SharedModel):
             cell.reset_parameters()
 
     def update_dag_logits(self, gradient_dicts, weight_decay, max_grad=0.1):
-        dag_grad_dict, reduction_dag_grad_dict = gradient_dicts[0], gradient_dicts[1]
+        # dag_grad_dict, reduction_dag_grad_dict = gradient_dicts[0], gradient_dicts[1]
 
         dag_probs = tuple(expit(logit) for logit in self.dags_logits)
 
         current_average_dag_probs = tuple(np.mean(prob) for prob in dag_probs)
 
         for i, key in enumerate(self.all_connections):
+            #for normal gradient and reduction gradient
             for grad_dict, current_average_dag_prob, dag_logits in zip(gradient_dicts, current_average_dag_probs, self.dags_logits):
-                if key in dag_grad_dict:
+                if key in grad_dict:
                     grad = grad_dict[key] - weight_decay * (current_average_dag_prob - self.target_ave_prob)  # *expit(dag_logits[i])
                     deriv = sigmoid_derivitive(dag_logits[i])
                     logit_grad = grad * deriv
