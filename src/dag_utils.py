@@ -44,7 +44,7 @@ def trim_dag(dag: list, start_nodes: set, output_node=None):
     if output_node:
         new_dag = trim_dag_one_way(new_dag, {output_node}, False)
 
-    new_dag.sort(key = lambda x: (x[0], x[1]))
+    new_dag.sort()
     return new_dag
 
 def sample_valid_dag(dag_probs, reduction_dag_probs, all_connections, num_blocks):
@@ -92,18 +92,18 @@ def fix_dag_one_way(dag: list, start_nodes: set, forward=True):
 
         start_nodes.add(end)
 
-    new_dag.sort(key=lambda x: (x[0], x[1]))
+    new_dag.sort()
     return new_dag
 
 
 def fix_dag(dag: list, start_nodes: set, output_node=None):
-    dag.sort(key=lambda x: (x[0], x[1]))
+    dag.sort()
     new_dag = fix_dag_one_way(dag, start_nodes, True)
 
     if output_node:
         new_dag = fix_dag_one_way(new_dag, {output_node}, False)
 
-    new_dag.sort(key=lambda x: (x[0], x[1]))
+    new_dag.sort()
 
     if not new_dag:
         return [(max(start_nodes), output_node, shared_cnn.identity.__name__)]

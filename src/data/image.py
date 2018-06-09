@@ -20,7 +20,8 @@ class Image(object):
                 normalize,
             ])
         elif args.dataset == 'MNIST':
-            Dataset = datasets.MNIST
+            raise NotImplementedError(f'Unknown dataset: {args.dataset}')
+            # Dataset = datasets.MNIST
         else:
             raise NotImplementedError(f'Unknown dataset: {args.dataset}')
 
@@ -29,12 +30,10 @@ class Image(object):
             batch_size=args.batch_size, shuffle=True,
             num_workers=args.num_workers, pin_memory=True)
 
-        self.valid = t.utils.data.DataLoader(
+        self.test = t.utils.data.DataLoader(
             Dataset(root='./data', train=False, transform=transforms.Compose([
                 transforms.ToTensor(),
                 normalize,
             ])),
             batch_size=args.batch_size, shuffle=True,
             num_workers=args.num_workers, pin_memory=True)
-
-        self.test = self.valid

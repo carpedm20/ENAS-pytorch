@@ -1,8 +1,4 @@
 import argparse
-from utils import get_logger
-
-logger = get_logger()
-
 
 arg_lists = []
 parser = argparse.ArgumentParser()
@@ -146,6 +142,4 @@ def get_args():
         setattr(args, 'cuda', True)
     else:
         setattr(args, 'cuda', False)
-    if len(unparsed) > 1:
-        logger.info(f"Unparsed args: {unparsed}")
     return args, unparsed
