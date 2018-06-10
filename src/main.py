@@ -67,7 +67,7 @@ def main():
     save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     max_norm = 200
-    max_grad = 0.5
+    max_grad = 0.6
     weight_decay = 1e-2
     train_length = 25
 
@@ -87,7 +87,7 @@ def main():
 
         with Timer("Optimizer Construct", lambda x: logger.debug(x)):
             dropout_opt = DropoutSGD([cnn.dag_variables, cnn.reducing_dag_variables], connections=cnn.all_connections,
-                                     lr=8 * 25 * 5, weight_decay=0)
+                                     lr=8 * 25 * 10, weight_decay=0)
 
             dropout_opt.param_groups[0]['lr'] /= 6
 
@@ -160,7 +160,7 @@ def main():
                                     best_dag = cnn.cell_dags
 
                                 cnn_optimizer.zero_grad()
-                                dropout_opt.zero_grad()
+                                # dropout_opt.zero_grad()
                                 test_iterations = 25
                                 total_acc = 0
                                 total_loss = 0
@@ -171,7 +171,7 @@ def main():
                                         test_iter = iter(dataset.test)
                                         img, lab = next(test_iter)
 
-                                    outputs = cnn(dags, img.to(device))
+                                    outputs = cnn(img.to(device))
                                     max_index = outputs.max(dim=1)[1].cpu().numpy()
                                     acc = np.sum(max_index == lab.numpy()) / lab.shape[0]
                                     # outputs = cnn(images)
@@ -192,7 +192,7 @@ def main():
 
                                 gradient_dicts = dropout_opt.step_grad()
                                 gradient_dicts = [
-                                    {k: v / (test_iterations * args.batch_size) for k, v in gradient_dict.items()} for
+                                    {k: v / (test_iterations * (args.batch_size+num_batches)) for k, v in gradient_dict.items()} for
                                     gradient_dict in gradient_dicts]
                                 cnn.update_dag_logits(gradient_dicts, weight_decay=weight_decay, max_grad=max_grad)
 

@@ -1,6 +1,7 @@
 import numpy as np
 
-from models import shared_cnn
+from models import cnn_layers
+
 
 def sample(probs):
     random_nums = np.random.rand(len(probs))
@@ -86,7 +87,7 @@ def fix_dag_one_way(dag: list, start_nodes: set, forward=True):
             new_conn = [None, None, None]
             new_conn[start_index] = begin
             new_conn[end_index] = start
-            new_conn[2] = shared_cnn.identity.__name__
+            new_conn[2] = cnn_layers.identity.__name__
             new_dag.append(tuple(new_conn))
             start_nodes.add(start)
 
@@ -106,7 +107,7 @@ def fix_dag(dag: list, start_nodes: set, output_node=None):
     new_dag.sort()
 
     if not new_dag:
-        return [(max(start_nodes), output_node, shared_cnn.identity.__name__)]
+        return [(max(start_nodes), output_node, cnn_layers.identity.__name__)]
 
     return new_dag
 

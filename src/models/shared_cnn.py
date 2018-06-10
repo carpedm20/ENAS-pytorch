@@ -7,6 +7,7 @@ import numpy as np
 from models.cnn_layers import CNN_LAYER_CREATION_FUNCTIONS, initialize_layers_weights
 from scipy.special import expit, logit
 from torch import nn
+from typing import List
 
 def sigmoid_derivitive(x):
     return expit(x)*(1.0-expit(x))
@@ -17,19 +18,16 @@ class CNNCell(torch.nn.Module):
             self.input_channels = input_channels
             self.input_width = input_width
 
-    def __init__(self, input_infos: list[InputInfo], output_channels, output_width, reducing, dag_vars, num_blocks):
+    def __init__(self, input_infos: List[InputInfo], output_channels, output_width, reducing, dag_vars, num_cell_blocks):
         super().__init__()
-
-        self.reset_parameters()
 
         self.input_infos = input_infos
         self.num_inputs = len(self.input_infos)
-        self.num_blocks = num_blocks
-        num_outputs = self.num_inputs + num_blocks
+        self.num_cell_blocks = num_cell_blocks
+        num_outputs = self.num_inputs + num_cell_blocks
         self.output_channels = output_channels
         self.output_width = output_width
         self.reducing = reducing
-
         self.dag_vars = dag_vars
 
         self.connections = dict()
@@ -56,10 +54,11 @@ class CNNCell(torch.nn.Module):
 
     def forward(self, dag, *inputs):
         assert(len(inputs) == self.num_inputs)
-        inputs = inputs + self.num_inputs * [None]
-        outputs = [0] * (self.num_inputs + self.num_blocks)
-        num_inputs = [0] * (self.num_inputs + self.num_blocks)
-        inputs_relu = [None] * (self.num_inputs + self.num_blocks)
+        inputs = list(inputs)
+        inputs = inputs + self.num_cell_blocks * [None]
+        outputs = [0] * (self.num_inputs + self.num_cell_blocks)
+        num_inputs = [0] * (self.num_inputs + self.num_cell_blocks)
+        inputs_relu = [None] * (self.num_inputs + self.num_cell_blocks)
 
 
         for source, target, _type in dag:
@@ -103,11 +102,18 @@ class CNNCell(torch.nn.Module):
             params.extend(self.connections[key].parameters())
         return params
 
+class Architecture:
+
+    def __init__(self, final_filter_size, num_repeat_normal, num_modules):
+        self.final_filter_size = final_filter_size
+        self.num_repeat_normal = num_repeat_normal
+        self.num_modules = num_modules
+
 
 
 class CNN(torch.nn.Module):
-    def __init__(self, args, input_channels, height, width, output_classes, gpu,
-                 architecture=[('normal', 768//8)]*6 + [('reducing', 768//4)] + [('normal', 768//4)]*6 + [('reducing', 768//2)] +  [('normal', 768//2)]*6):
+    def __init__(self, args, input_channels, height, width, output_classes, gpu, num_cell_blocks=5,
+                 architecture=Architecture(final_filter_size=768//2, num_repeat_normal=6, num_modules=3)):
         super().__init__()
 
         self.args = args
@@ -119,6 +125,7 @@ class CNN(torch.nn.Module):
 
         self.output_height = self.height
         self.output_width = self.width
+        self.num_cell_blocks = num_cell_blocks
 
         self.cells = nn.Sequential()
         self.gpu = gpu
@@ -131,8 +138,8 @@ class CNN(torch.nn.Module):
         current_input_info = CNNCell.InputInfo(input_channels=input_channels, input_width=width)
 
         #count connections
-        temp_cell = CNNCell(input_infos=[last_input_info, current_input_info], output_channels=architecture[0][1],
-                            output_width=self.output_width, reducing=False, dag_vars=None)
+        temp_cell = CNNCell(input_infos=[last_input_info, current_input_info], output_channels=architecture.final_filter_size,
+                            output_width=self.output_width, reducing=False, dag_vars=None, num_cell_blocks=num_cell_blocks)
 
         self.all_connections = list(temp_cell.connections.keys())
 
@@ -143,7 +150,16 @@ class CNN(torch.nn.Module):
             self.dag_variables_dict[key] = self.dag_variables[i]
             self.reducing_dag_variables_dict[key] = self.reducing_dag_variables[i]
 
-        for i, (type, num_filters) in enumerate(architecture):
+        cells = [('normal', architecture.final_filter_size)]*architecture.num_repeat_normal
+        current_filter_size = architecture.final_filter_size
+        for module in range(architecture.num_modules):
+            cells.append(('reducing', current_filter_size))
+            current_filter_size //= 2
+            cells.extend([('normal', current_filter_size)]*architecture.num_repeat_normal)
+
+        cells.reverse()
+
+        for i, (type, num_filters) in enumerate(cells):
             if type == 'reducing':
                 #TODO: do this calculation correctly
                 self.output_height /= 2
@@ -155,12 +171,12 @@ class CNN(torch.nn.Module):
 
             dag_vars = self.dag_variables_dict if reducing == False else self.reducing_dag_variables_dict
             self.cells.add_module(f'{i}-{type}-{num_filters}', CNNCell(input_infos=[last_input_info, current_input_info],
-                                            output_channels=num_filters, output_width=self.output_width, reducing=reducing, dag_vars=dag_vars, num_blocks=self.num_blocks))
+                                       output_channels=num_filters, output_width=self.output_width, reducing=reducing, dag_vars=dag_vars, num_cell_blocks=self.num_cell_blocks))
 
             last_input_info, current_input_info = current_input_info, CNNCell.InputInfo(input_channels=num_filters, input_width=self.output_width)
 
         if self.output_classes:
-            self.conv_output_size = self.output_height * self.output_width * self.architecture[-1][-1]
+            self.conv_output_size = self.output_height * self.output_width * self.architecture.final_filter_size
             self.out_layer = nn.Linear(self.conv_output_size, self.output_classes)
             torch.nn.init.kaiming_normal_(self.out_layer.weight, mode='fan_out', nonlinearity='relu')
             torch.nn.init.constant_(self.out_layer.bias, 0)
