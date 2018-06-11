@@ -1,18 +1,15 @@
 import typing
-
 import torch
-from torch.optim import Optimizer, Adam
 
-class AdamShared(Adam):
-    """
-    SharedAdamOptimizer
-    """
 
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, amsgrad=False, gpu=None):
-        super().__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
-        self.gpu_device = gpu
-        self.gpu_params = set()
+class SharedOptimizerBase:
+    def __init__(self, gpu_device):
+        self.gpu_device = gpu_device
         self.cpu_device = torch.device("cpu")
+        self.gpu_params = set()
+
+        assert(self.state is not None)
+        assert(self.param_groups is not None)
 
     def __to_device(self, device, params):
         param_groups = list(params)

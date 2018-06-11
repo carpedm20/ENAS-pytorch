@@ -1,7 +1,5 @@
 import math
-
 from torch.optim.lr_scheduler import _LRScheduler
-
 from utils import to_string
 
 
@@ -19,7 +17,7 @@ class CosineAnnealingRestartingLR(_LRScheduler):
 
     It has been proposed in
     `SGDR: Stochastic Gradient Descent with Warm Restarts`_. Note that this only
-    implements the cosine annealing part of SGDR, and not the restarts.
+    implements the cosine annealing part of SGDR, and the restarts.
 
     Args:
         optimizer (Optimizer): Wrapped optimizer.
@@ -32,13 +30,13 @@ class CosineAnnealingRestartingLR(_LRScheduler):
     """
 
     def __init__(self, optimizer, T_max, eta_min=0, last_epoch=-1, period_multiplier=1):
+        super().__init__(optimizer, last_epoch)
         self.T_max = T_max
         self.eta_min = eta_min
         self.period_multiplier = period_multiplier
-        super(CosineAnnealingRestartingLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
-        return [self.eta_min + (base_lr - self.eta_min) * (1 + math.cos(math.pi * min(self.last_epoch / self.T_max, 1.0))) / 2 for base_lr in self.base_lrs]
+        return [self.eta_min + (base_lr - self.eta_min) * (1 + math.cos(math.pi * self.last_epoch / self.T_max)) / 2 for base_lr in self.base_lrs]
 
     def step(self, epoch=None):
         if epoch is None:
@@ -54,4 +52,3 @@ class CosineAnnealingRestartingLR(_LRScheduler):
         return to_string(lr=self.get_lr(), t_max=self.T_max, eta_min=self.eta_min, period_multipler=self.period_multiplier, last_epoch=self.last_epoch)
 
     __str__ = __repr__
-

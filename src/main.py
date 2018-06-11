@@ -1,9 +1,10 @@
 import datetime
 import gc
 import json
+import logging
 import os
+import shutil
 import traceback
-
 import numpy as np
 import torch
 from torch import nn
@@ -12,20 +13,15 @@ from tqdm import tqdm
 
 import config_conv
 import data.image
-from adam_shared import AdamShared
-from cosine_annealing_with_restarts import CosineAnnealingRestartingLR
-from dropout_sgd import DropoutSGD
+import dag_utils
 from models.shared_cnn import CNN
-
-import logging
-import shutil
-
-from dag_utils import *
-from sgd_shared import SGDShared
-from utils import *
-
+from optim.cosine_annealing_with_restarts import CosineAnnealingRestartingLR
+from optim.dropout_sgd import DropoutSGD
+from optim.sgd_shared import SGDShared
+import utils
 
 np.set_printoptions(suppress=True)
+
 
 def get_logger(save_path: str) -> logging.Logger:
     logger = logging.getLogger('ENAS')
@@ -61,6 +57,52 @@ def numpy_to_json(object):
     return json.dumps(object, cls=NumpyEncoder)
 
 
+def cnn_train_step(cnn, criterion, images, labels, backprop=True):
+    outputs = cnn(images)
+    _, predicted = torch.max(outputs.data, 1)
+    loss = criterion(outputs, labels)
+    loss_value = loss.data.item()
+    acc = (predicted == labels).sum().item() / labels.shape[0]
+    if backprop:
+        loss.backward()
+
+    return loss_value, acc
+
+
+def cnn_train(cnn, criterion, data_iter, max_batches, device, cnn_optimizer=None, current_model_parameters=None,
+              max_grad_norm=None, backprop=True):
+    total_loss = 0
+    total_acc = 0
+    num_batches = 0
+    iter_ended = False
+    with tqdm(total=max_batches, desc='cnn_train-' + str(backprop)) as t:
+        try:
+            for i in range(max_batches):
+                if cnn_optimizer:
+                    cnn_optimizer.zero_grad()
+                images, labels = next(data_iter)
+                loss, acc = cnn_train_step(cnn, criterion, images.to(device), labels.to(device), backprop=backprop)
+
+                if cnn_optimizer:
+                    if max_grad_norm:
+                        clip_grad_norm_(current_model_parameters, max_norm=max_grad_norm)
+                    cnn_optimizer.step()
+
+                total_loss += loss
+                total_acc += acc
+                num_batches += 1
+
+                avg_loss = total_loss / num_batches
+                avg_acc = total_acc / num_batches
+
+                t.update(1)
+                t.set_postfix(loss=loss, acc=acc, avg_loss=avg_loss, avg_acc=avg_acc)
+        except StopIteration:
+            iter_ended = True
+
+    return avg_loss, avg_acc, num_batches, iter_ended
+
+
 def main():
     load_path = None
     # save_path = load_path + "_"+ datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -81,27 +123,28 @@ def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def create_cnn():
-        with Timer("CNN construct", lambda x: logger.debug(x)):
+        with utils.Timer("CNN construct", lambda x: logger.debug(x)):
             cnn = CNN(args, input_channels=3, height=32, width=32, output_classes=10, gpu=gpu)
             cnn.train()
 
-        with Timer("Optimizer Construct", lambda x: logger.debug(x)):
+        with utils.Timer("Optimizer Construct", lambda x: logger.debug(x)):
             dropout_opt = DropoutSGD([cnn.dag_variables, cnn.reducing_dag_variables], connections=cnn.all_connections,
                                      lr=8 * 25 * 10, weight_decay=0)
 
             dropout_opt.param_groups[0]['lr'] /= 6
 
-
             # cnn_optimizer = AdamShared(cnn.parameters(), lr=0.00001, weight_decay=1e-5, gpu=gpu)
             # cnn_optimizer = AdamShared(cnn.parameters(), lr=l_max, weight_decay=1e-4, gpu=gpu)
 
-            #Follows ENAS
+            # Follows ENAS
             l_max = 0.05
             l_min = 0.001
             period_multiplier = 2
             period_start = 10
-            cnn_optimizer = SGDShared(cnn.parameters(),lr = l_max, momentum=0.9, dampening=0, weight_decay=1e-4, nesterov=True, gpu=gpu)
-            learning_rate_scheduler = CosineAnnealingRestartingLR(optimizer=cnn_optimizer, T_max=period_start, eta_min=l_min, period_multiplier=period_multiplier)
+            cnn_optimizer = SGDShared(cnn.parameters(), lr=l_max, momentum=0.9, dampening=0, weight_decay=1e-4,
+                                      nesterov=True, gpu_device=gpu)
+            learning_rate_scheduler = CosineAnnealingRestartingLR(optimizer=cnn_optimizer, T_max=period_start,
+                                                                  eta_min=l_min, period_multiplier=period_multiplier)
 
         return cnn, cnn_optimizer, dropout_opt, learning_rate_scheduler
 
@@ -118,244 +161,126 @@ def main():
     total_loss = 0
     total_acc = 0
 
-    test_iter = iter(dataset.test)
-
-    def calculate_loss_info(outputs, labels):
-        _, predicted = torch.max(outputs.data, 1)
-        num_correct = (predicted == labels).sum().item()
-        loss = criterion(outputs, labels)
-        return loss, num_correct
+    test_dataset_iter = iter(dataset.test)
 
     with open(os.path.join(save_path, "logs.json"), 'w', newline='') as jsonfile:
         # spamwriter = csv.writer(csvfile, delimiter=';', quotechar='|', quoting=csv.csv.QUOTE_NONNUMERIC)
 
         dropout_opt.zero_grad()
         for epoch in range(1000):
-            best_dag = None
+            best_dags = None
             best_acc = 0
             print('epoch', epoch)
             learning_rate_scheduler.step()
 
-            with tqdm(total=2000, desc='train') as t:
+            train_dataset_iter = iter(dataset.train)
+            iter_ended = False
+
+            train_batch_num = 0
+            while not iter_ended:
                 gc.collect()
-                get_new_network = True
-                for batch_i, (images, labels) in enumerate(dataset.train, 0):
-                    outputs = None
-                    loss = None
-                    try:
-                        if batch_i % train_length == 0 and not get_new_network:
-                            if num_batches > 0:
-                                info = dict(time=datetime.datetime.now().isoformat(), type="train", epoch=epoch,
-                                            batch_i=batch_i, avg_loss=total_loss / num_batches,
-                                            avg_acc=total_acc / num_batches,
-                                            dags=cnn.cell_dags, dags_probs=cnn.get_dags_probs(),
-                                            learning_rate_scheduler=str(learning_rate_scheduler))
+                cnn_optimizer.full_reset_grad()
+                dropout_opt.full_reset_grad()
 
-                                jsonfile.write(numpy_to_json(info) + '\n')
-
-                                logger.debug(info)
-
-                                if best_acc < total_acc / num_batches:
-                                    best_acc = total_acc / num_batches
-                                    best_dag = cnn.cell_dags
-
-                                cnn_optimizer.zero_grad()
-                                # dropout_opt.zero_grad()
-                                test_iterations = 25
-                                total_acc = 0
-                                total_loss = 0
-                                for batch_num in range(1, 1 + test_iterations):
-                                    try:
-                                        img, lab = next(test_iter)
-                                    except StopIteration:
-                                        test_iter = iter(dataset.test)
-                                        img, lab = next(test_iter)
-
-                                    outputs = cnn(img.to(device))
-                                    max_index = outputs.max(dim=1)[1].cpu().numpy()
-                                    acc = np.sum(max_index == lab.numpy()) / lab.shape[0]
-                                    # outputs = cnn(images)
-                                    loss = criterion(outputs, lab.to(device))
-                                    loss_value = loss.data.item()
-                                    loss.backward()
-
-                                    total_acc += acc
-                                    total_loss += loss_value
-
-                                    loss = None
-                                    outputs = None
-                                    img = None
-                                    lab = None
-
-                                    # t1.set_postfix(loss=loss_value, acc=acc, avg_loss=total_loss / batch_num,
-                                    #               avg_acc=total_acc / batch_num)
-
-                                gradient_dicts = dropout_opt.step_grad()
-                                gradient_dicts = [
-                                    {k: v / (test_iterations * (args.batch_size+num_batches)) for k, v in gradient_dict.items()} for
-                                    gradient_dict in gradient_dicts]
-                                cnn.update_dag_logits(gradient_dicts, weight_decay=weight_decay, max_grad=max_grad)
-
-                                cnn_optimizer.full_reset_grad()
-                                dropout_opt.full_reset_grad()
-
-                                info = dict(time=datetime.datetime.now().isoformat(), type="test-cheat", epoch=epoch,
-                                            batch_i=batch_i, avg_loss=total_loss / num_batches,
-                                            avg_acc=total_acc / num_batches,
-                                            dags=cnn.cell_dags, dags_probs=cnn.get_dags_probs())
-
-                                jsonfile.write(numpy_to_json(info) + '\n')
-                                logger.debug(info)
-                                logger.info(dict(time=datetime.datetime.now().isoformat(), type="test-cheat", epoch=epoch,
-                                            batch_i=batch_i, avg_loss=total_loss / num_batches,
-                                            avg_acc=total_acc / num_batches))
-
-                            get_new_network = True
-
-                        if get_new_network:
-                            total_acc = 0
-                            total_loss = 0
-                            num_batches = 0
-                            get_new_network = False
-
-                            dags_probs = cnn.get_dags_probs()
-                            with Timer("to_cuda", lambda x: logger.info(x)):
-                                dags = sample_fixed_dags(dags_probs, cnn.all_connections, args.num_blocks)
-
-                                cnn_optimizer.full_reset_grad()
-                                cnn.set_dags(dags)
-                                cnn_optimizer.to_gpu(cnn.get_parameters(dags))
-                                dropout_opt.full_reset_grad()
-
-                            current_model_parameters = cnn.get_parameters(dags)
-
-                        cnn_optimizer.zero_grad()
-                        outputs = cnn(images.to(device))
-
-                        max_index = outputs.max(dim=1)[1].cpu().numpy()
-                        acc = np.sum(max_index == labels.numpy()) / labels.shape[0]
-
-
-                        # outputs = cnn(images)
-                        loss = criterion(outputs, labels.to(device))
-
-                        loss_value = loss.data.item()
-
-                        if loss_value > 1e4:
-                            logger.error(f"High loss value{loss_value} dag={numpy_to_json(dags)}")
-                            continue
-                        loss.backward()
-
-                        clip_grad_norm_(current_model_parameters, max_norm=max_norm)
-                        cnn_optimizer.step()
-
-                        total_acc += acc
-                        total_loss += loss_value
-                        num_batches += 1
-
-                        t.update(1)
-                        t.set_postfix(loss=loss_value, acc=acc, avg_loss=total_loss / num_batches,
-                                      avg_acc=total_acc / num_batches)
-
-                    except RuntimeError as x:
-                        exec = traceback.format_exc()
-                        logger.error(x)
-                        logger.error(exec)
-
-                        outputs = None
-                        loss = None
-                        cnn.to_cpu()
+                try:
+                    # Get new Network
+                    dags_probs = cnn.get_dags_probs()
+                    with utils.Timer("to_cuda", lambda x: logger.info(x)):
+                        dags = dag_utils.sample_fixed_dags(dags_probs, cnn.all_connections, args.num_blocks)
                         cnn_optimizer.full_reset_grad()
+                        cnn.set_dags(dags)
+                        cnn_optimizer.to_gpu(cnn.get_parameters(dags))
                         dropout_opt.full_reset_grad()
+                    current_model_parameters = cnn.get_parameters(dags)
 
-                        cnn_optimizer.to_cpu()
-                        get_new_network = True
-                        gc.collect()
-                        torch.cuda.empty_cache()
+                    # Train on Training set
+                    avg_loss, avg_acc, num_batches, iter_ended = cnn_train(cnn, criterion, train_dataset_iter,
+                                                                           train_length,
+                                                                           gpu, cnn_optimizer,
+                                                                           current_model_parameters=current_model_parameters,
+                                                                           backprop=True)
+                    info = dict(time=datetime.datetime.now().isoformat(), type="train", epoch=epoch,
+                                train_batch_num=train_batch_num, avg_loss=avg_loss,
+                                avg_acc=avg_acc,
+                                dags=cnn.cell_dags, dags_probs=cnn.get_dags_probs(),
+                                learning_rate_scheduler=str(learning_rate_scheduler))
 
+                    jsonfile.write(numpy_to_json(info) + '\n')
+                    logger.debug(info)
+
+                    # Train on Testing set
+                    dropout_opt.zero_grad()
+                    avg_loss, avg_acc, num_batches, test_iter_ended = cnn_train(cnn, criterion, test_dataset_iter,
+                                                                                train_length,
+                                                                                gpu, cnn_optimizer=None,
+                                                                                current_model_parameters=None,
+                                                                                backprop=True)
+                    if test_iter_ended:
+                        test_dataset_iter = iter(dataset.test)
+
+                    if best_acc < avg_acc:
+                        best_acc = avg_acc
+                        best_dags = cnn.cell_dags
+
+                    info = dict(time=datetime.datetime.now().isoformat(), type="test-cheat", epoch=epoch,
+                                train_batch_num=train_batch_num, avg_loss=avg_loss,
+                                avg_acc=avg_acc, dags=cnn.cell_dags, dags_probs=cnn.get_dags_probs())
+
+                    jsonfile.write(numpy_to_json(info) + '\n')
+                    logger.info(info)
+
+                    # Dropout updates
+                    gradient_dicts = dropout_opt.step_grad()
+                    gradient_dicts = [
+                        {k: v / (train_length * num_batches) for k, v in gradient_dict.items()} for
+                        gradient_dict in gradient_dicts]
+                    cnn.update_dag_logits(gradient_dicts, weight_decay=weight_decay, max_grad=max_grad)
+
+                except RuntimeError as x:
+                    gc.collect()
+                    exec = traceback.format_exc()
+                    logger.error(x)
+                    logger.error(exec)
+
+                    cnn.set_dags()
+                    cnn_optimizer.full_reset_grad()
+                    dropout_opt.full_reset_grad()
+                    cnn_optimizer.to_cpu()
+                    torch.cuda.empty_cache()
+
+            # Save cnn
             cnn.save(save_path)
-            cnn_optimizer.full_reset_grad()
-            dropout_opt.full_reset_grad()
 
-            with tqdm(total=50) as t:
-                gc.collect()
-                num_batches = 0
-                total_acc = 0
-                total_loss = 0
+            # Train best dag again and test on full testing dataset
+            cnn.set_dags(best_dags)
+            current_model_parameters = cnn.get_parameters(best_dags)
 
-                current_model_parameters = cnn.get_parameters(best_dag)
-
-                cnn.set_dags(best_dag)
-                cnn_optimizer.to_gpu(cnn.get_parameters(best_dag))
-
-                for batch_i, data_it in enumerate(dataset.train, 0):
-                    cnn_optimizer.zero_grad()
-                    images, labels = data_it
-                    outputs = cnn(images.to(device))
-
-                    max_index = outputs.max(dim=1)[1].cpu().numpy()
-                    acc = np.sum(max_index == labels.numpy()) / labels.shape[0]
-
-                    loss = criterion(outputs, labels.to(device))
-
-                    del outputs
-
-                    loss_value = loss.data.item()
-
-                    loss.backward()
-                    del loss
-                    # num_dropout_batches_items += args.batch_size
-
-                    clip_grad_norm_(current_model_parameters, max_norm=max_norm).item()
-                    cnn_optimizer.step()
-
-                    total_acc += acc
-                    total_loss += loss_value
-                    num_batches += 1
-
-                    t.update(1)
-                    t.set_postfix(loss=loss_value, acc=acc, avg_loss=total_loss / num_batches,
-                                  avg_acc=total_acc / num_batches, lr = learning_rate_scheduler.get_lr())
-                    if batch_i >= 50:
-                        break
-
-                info = dict(time=datetime.datetime.now().isoformat(), type="train-again",
-                            avg_loss=total_loss / num_batches,
-                            avg_acc=total_acc / num_batches, best_dag=best_dag)
-                # spamwriter.writerow([datetime.datetime.now(), "train-again", total_loss / num_batches, total_acc / num_batches, best_dag])
-                jsonfile.write(numpy_to_json(info) + '\n')
-                logger.info(info)
-            cnn_optimizer.full_reset_grad()
-            gc.collect()
-            correct = 0
-            total = 0
-            with torch.no_grad():
-                total_loss = 0
-                cnn.eval()
-                cnn_optimizer.to_cpu()
-                cnn.set_dags(best_dag)
-                for images, labels in dataset.test:
-                    outputs = cnn(images.to(device))
-                    _, predicted = torch.max(outputs.data, 1)
-                    total += labels.size(0)
-                    correct += (predicted == labels.to(device)).sum().item()
-                    loss = criterion(outputs, labels.to(device))
-                    del outputs
-
-                    del _
-                    del predicted
-
-                    total_loss += loss.data.item()
-                    del loss
-
-                cnn.train()
-
-            info = dict(time=datetime.datetime.now().isoformat(), type="test-full", avg_loss=total_loss / total,
-                        avg_acc=correct / total, best_dag=best_dag)
+            train_dataset_iter = iter(dataset.train)
+            avg_loss, avg_acc, _, _ = cnn_train(cnn, criterion, train_dataset_iter, train_length, gpu, cnn_optimizer,
+                                                current_model_parameters, max_grad_norm=max_grad, backprop=True)
+            del train_dataset_iter
+            info = dict(time=datetime.datetime.now().isoformat(), type="train-again",
+                        avg_loss=avg_loss, avg_acc=avg_acc, best_dag=best_dags)
             jsonfile.write(numpy_to_json(info) + '\n')
             logger.info(info)
 
-            logger.info('Accuracy of the network on the 10000 test images: %d %%' % (100 * correct / total))
+            cnn_optimizer.full_reset_grad()
+            dropout_opt.full_reset_grad()
+            gc.collect()
+
+            #Full test on testing dataset
+            cnn.eval()
+            with torch.no_grad():
+                avg_loss, avg_acc, _, _ = cnn_train(cnn, criterion, iter(dataset.test), None, gpu, None, None, None,
+                                                    backprop=False)
+            cnn.train()
+
+            info = dict(time=datetime.datetime.now().isoformat(), type="test-full", avg_loss=avg_loss,
+                        avg_acc=avg_acc, best_dag=best_dags)
+            jsonfile.write(numpy_to_json(info) + '\n')
+            logger.info(info)
+
+            logger.info('Accuracy of the network on the 10000 test images: %d %%' % (avg_acc))
             jsonfile.flush()
 
 
