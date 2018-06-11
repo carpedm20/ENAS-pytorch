@@ -20,7 +20,7 @@ from optim.dropout_sgd import DropoutSGD
 from optim.sgd_shared import SGDShared
 import utils
 
-np.set_printoptions(suppress=True)
+np.set_printoptions(suppress=True, linewidth=np.inf)
 
 
 def get_logger(save_path: str) -> logging.Logger:
@@ -70,12 +70,12 @@ def cnn_train_step(cnn, criterion, images, labels, backprop=True):
 
 
 def cnn_train(cnn, criterion, data_iter, max_batches, device, cnn_optimizer=None, current_model_parameters=None,
-              max_grad_norm=None, backprop=True):
+              max_grad_norm=None, backprop=True, descripion='cnn-train'):
     total_loss = 0
     total_acc = 0
     num_batches = 0
     iter_ended = False
-    with tqdm(total=max_batches, desc='cnn_train-' + str(backprop)) as t:
+    with tqdm(total=max_batches, desc=f"{descripion}_backprop:{backprop}_cnn_optimizer:{cnn_optimizer is not None}") as t:
         try:
             for i in range(max_batches):
                 if cnn_optimizer:
@@ -104,9 +104,9 @@ def cnn_train(cnn, criterion, data_iter, max_batches, device, cnn_optimizer=None
 
 
 def main():
-    load_path = None
-    # save_path = load_path + "_"+ datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    load_path = "./logs/new/2018-06-08_21-16-41"
+    save_path = load_path + "_"+ datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     max_grad_norm = 200
     max_grad = 0.6
@@ -174,6 +174,7 @@ def main():
 
             train_batch_num = 0
             while not iter_ended:
+                train_batch_num += 1
                 gc.collect()
                 cnn_optimizer.full_reset_grad()
                 dropout_opt.full_reset_grad()
@@ -194,7 +195,7 @@ def main():
                                                                            train_length,
                                                                            gpu, cnn_optimizer, max_grad_norm=max_grad_norm,
                                                                            current_model_parameters=current_model_parameters,
-                                                                           backprop=True)
+                                                                           backprop=True, descripion=f"train-epoch{epoch}-{train_batch_num}")
                     info = dict(time=datetime.datetime.now().isoformat(), type="train", epoch=epoch,
                                 train_batch_num=train_batch_num, avg_loss=avg_loss,
                                 avg_acc=avg_acc,
@@ -210,7 +211,7 @@ def main():
                                                                                 train_length,
                                                                                 gpu, cnn_optimizer=None,
                                                                                 current_model_parameters=None,
-                                                                                backprop=True)
+                                                                                backprop=True, descripion=f"test-epoch{epoch}-{train_batch_num}")
                     if test_iter_ended:
                         test_dataset_iter = iter(dataset.test)
 
@@ -255,7 +256,8 @@ def main():
 
             train_dataset_iter = iter(dataset.train)
             avg_loss, avg_acc, _, _ = cnn_train(cnn, criterion, train_dataset_iter, train_length, gpu, cnn_optimizer,
-                                                current_model_parameters, max_grad_norm=max_grad_norm, backprop=True)
+                                                current_model_parameters, max_grad_norm=max_grad_norm, backprop=True,
+                                                descripion=f"train-again")
             del train_dataset_iter
             info = dict(time=datetime.datetime.now().isoformat(), type="train-again",
                         avg_loss=avg_loss, avg_acc=avg_acc, best_dag=best_dags)
@@ -269,8 +271,8 @@ def main():
             #Full test on testing dataset
             cnn.eval()
             with torch.no_grad():
-                avg_loss, avg_acc, _, _ = cnn_train(cnn, criterion, iter(dataset.test), None, gpu, None, None, None,
-                                                    backprop=False)
+                avg_loss, avg_acc, _, _ = cnn_train(cnn, criterion, iter(dataset.test), 100000000, gpu, None, None, None,
+                                                    backprop=False, descripion=f"test-full")
             cnn.train()
 
             info = dict(time=datetime.datetime.now().isoformat(), type="test-full", avg_loss=avg_loss,

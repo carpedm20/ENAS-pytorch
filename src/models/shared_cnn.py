@@ -187,8 +187,6 @@ class CNN(torch.nn.Module):
         for idx, jdx, _type in self.all_connections:
             parent_counts[jdx] += 1
 
-        print(parent_counts)
-
         probs = np.array(list(2 / parent_counts[jdx] for idx, jdx, _type in self.all_connections))
         self.dags_logits = (logit(probs), logit(probs))
 
