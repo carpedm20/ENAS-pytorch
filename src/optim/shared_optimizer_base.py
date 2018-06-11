@@ -1,15 +1,20 @@
 import typing
 import torch
+from torch.optim import Optimizer
 
 
-class SharedOptimizerBase:
+class SharedOptimizerBase(object):
+    """Base which contains implementation for functions which allow Optimizer variables
+    to be shifted to and from a gpu device
+
+    Requires that the subclass also inherit from a subclass of torch.optim.Optimizer
+    """
     def __init__(self, gpu_device):
         self.gpu_device = gpu_device
         self.cpu_device = torch.device("cpu")
         self.gpu_params = set()
 
-        assert(self.state is not None)
-        assert(self.param_groups is not None)
+        assert(isinstance(self, Optimizer))
 
     def __to_device(self, device, params):
         param_groups = list(params)

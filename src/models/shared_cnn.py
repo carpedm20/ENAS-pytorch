@@ -26,7 +26,7 @@ class CNN(torch.nn.Module):
             self.num_repeat_normal = num_repeat_normal
             self.num_modules = num_modules
 
-    def __init__(self, args, input_channels, height, width, output_classes, gpu, num_cell_blocks=5,
+    def __init__(self, input_channels, height, width, output_classes, gpu, num_cell_blocks,
                  architecture=Architecture(final_filter_size=768 // 2, num_repeat_normal=6, num_modules=3)):
         super().__init__()
 

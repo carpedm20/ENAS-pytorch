@@ -8,7 +8,7 @@ from optim.shared_optimizer_base import SharedOptimizerBase
 
 class SGDShared(SGD, SharedOptimizerBase):
     """
-    SharedAdamOptimizer
+    SGD with functions which allow Optimizer variables to be shifted to and from a gpu device
     """
     def __init__(self, params, lr=required, momentum=0, dampening=0,
                  weight_decay=0, nesterov=False, gpu_device=None):

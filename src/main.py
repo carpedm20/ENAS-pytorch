@@ -46,6 +46,7 @@ def get_logger(save_path: str) -> logging.Logger:
 
 
 class NumpyEncoder(json.JSONEncoder):
+    '''Json Ecnoder for Numpy objects'''
     def default(self, o):
         if isinstance(o, np.ndarray):
             return o.tolist()
@@ -53,10 +54,12 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 def numpy_to_json(object):
+    """Converts the object to a json string. Works on numpy objects"""
     return json.dumps(object, cls=NumpyEncoder)
 
 
 def cnn_train_step(cnn, criterion, images, labels, backprop=True):
+    """Does one step of training with the given input"""
     outputs = cnn(images)
     _, predicted = torch.max(outputs.data, 1)
     loss = criterion(outputs, labels)
@@ -70,6 +73,7 @@ def cnn_train_step(cnn, criterion, images, labels, backprop=True):
 
 def cnn_train(cnn, criterion, data_iter, max_batches, device, cnn_optimizer=None, current_model_parameters=None,
               max_grad_norm=None, backprop=True, descripion='cnn-train'):
+    """Does up to max_batches steps of training on the gien input."""
     total_loss = 0
     total_acc = 0
     num_batches = 0
@@ -112,6 +116,7 @@ def main():
     max_grad = 0.6
     weight_decay = 1e-2
     train_length = 25
+    num_cell_blocks = 5
 
     os.makedirs(save_path)
     shutil.copytree(os.path.dirname(os.path.realpath(__file__)), os.path.join(save_path, 'src'))
@@ -119,18 +124,22 @@ def main():
     logger = get_logger(save_path)
 
     args, unparsed = config_conv.get_args()
+    dataset = data.image.Image(args)
+
     gpu = torch.device("cuda:0")
 
     def create_cnn():
+        architecture = CNN.Architecture(final_filter_size=768 // 2, num_repeat_normal=6, num_modules=3)
         with utils.Timer("CNN construct", lambda x: logger.debug(x)):
-            cnn = CNN(args, input_channels=3, height=32, width=32, output_classes=10, gpu=gpu)
+            cnn = CNN(input_channels=3, height=32, width=32, output_classes=10, gpu=gpu, num_cell_blocks=num_cell_blocks,
+                      architecture=architecture)
             cnn.train()
 
         with utils.Timer("Optimizer Construct", lambda x: logger.debug(x)):
             dropout_opt = DropoutSGD([cnn.dag_variables, cnn.reducing_dag_variables], connections=cnn.all_connections,
                                      lr=8 * 25 * 10, weight_decay=0)
 
-            dropout_opt.param_groups[0]['lr'] /= 6
+            dropout_opt.param_groups[0]['lr'] /= (architecture.num_repeat_normal*architecture.num_modules/(architecture.num_modules-1))
 
             # cnn_optimizer = AdamShared(cnn.parameters(), lr=0.00001, weight_decay=1e-5, gpu=gpu)
             # cnn_optimizer = AdamShared(cnn.parameters(), lr=l_max, weight_decay=1e-4, gpu=gpu)
@@ -154,8 +163,6 @@ def main():
         learning_rate_scheduler.load_state_dict(torch.load(os.path.join(load_path, "learning_rate_scheduler")))
 
     criterion = nn.CrossEntropyLoss()
-
-    dataset = data.image.Image(args)
 
     test_dataset_iter = iter(dataset.test)
 
@@ -183,7 +190,7 @@ def main():
                     # Get new Network
                     dags_probs = cnn.get_dags_probs()
                     with utils.Timer("to_cuda", lambda x: logger.info(x)):
-                        dags = dag_utils.sample_fixed_dags(dags_probs, cnn.all_connections, args.num_blocks)
+                        dags = dag_utils.sample_fixed_dags(dags_probs, cnn.all_connections, num_cell_blocks)
                         cnn_optimizer.full_reset_grad()
                         cnn.set_dags(dags)
                         cnn_optimizer.to_gpu(cnn.get_parameters(dags))

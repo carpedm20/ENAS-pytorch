@@ -6,7 +6,7 @@ from optim.shared_optimizer_base import SharedOptimizerBase
 
 class AdamShared(Adam, SharedOptimizerBase):
     """
-    SharedAdamOptimizer
+    Adam optimizer with functions which allow Optimizer variables to be shifted to and from a gpu device
     """
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, amsgrad=False, gpu_device=None):
         Adam.__init__(self, params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)

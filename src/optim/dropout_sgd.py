@@ -1,10 +1,10 @@
 import torch
 from torch.optim.optimizer import Optimizer, required
-# from .optimizer import Optimizer, required
-
 
 class DropoutSGD(Optimizer):
-    r"""Implements stochastic gradient descent (optionally with momentum).
+    r"""Implements stochastic gradient descent (optionally with momentum) targeted for Dropout updates
+    Base of Code is torch.optim.optimizer.SGD with changes to support getting the gradients of Dropout rates instead
+    of updating.
 
     Nesterov momentum is based on the formula from
     `On the importance of initialization and momentum in deep learning`__.
@@ -17,12 +17,6 @@ class DropoutSGD(Optimizer):
         weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
         dampening (float, optional): dampening for momentum (default: 0)
         nesterov (bool, optional): enables Nesterov momentum (default: False)
-
-    Example:
-        >>> optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-        >>> optimizer.zero_grad()
-        >>> loss_fn(model(input), target).backward()
-        >>> optimizer.step()
 
     __ http://www.cs.toronto.edu/%7Ehinton/absps/momentum.pdf
 
@@ -84,46 +78,6 @@ class DropoutSGD(Optimizer):
                 and returns the loss.
         """
         raise NotImplementedError()
-        # loss = None
-        # if closure is not None:
-        #     loss = closure()
-        #
-        #
-        # steps_dicts = []
-        # for dic in self.param_group_dicts:
-        #     step_dict = {}
-        #     steps_dicts.append(step_dict)
-        #     for key, group in dic.items():
-        #
-        #         # for group in self.param_groups:
-        #         weight_decay = group['weight_decay']
-        #         momentum = group['momentum']
-        #         dampening = group['dampening']
-        #         nesterov = group['nesterov']
-        #
-        #         for p in group['params']:
-        #             if p.grad is None:
-        #                 continue
-        #             d_p = p.grad.data
-        #             if weight_decay != 0:
-        #                 d_p.add_(weight_decay, p.data)
-        #             if momentum != 0:
-        #                 param_state = self.state[p]
-        #                 if 'momentum_buffer' not in param_state:
-        #                     buf = param_state['momentum_buffer'] = torch.zeros_like(p.data)
-        #                     buf.mul_(momentum).add_(d_p)
-        #                 else:
-        #                     buf = param_state['momentum_buffer']
-        #                     buf.mul_(momentum).add_(1 - dampening, d_p)
-        #                 if nesterov:
-        #                     d_p = d_p.add(momentum, buf)
-        #                 else:
-        #                     d_p = buf
-        #
-        #             step_dict[key] = (-group['lr']*d_p).data.item()
-        #             # p.data.add_(-group['lr'], d_p)
-        #
-        # return loss
 
     def step_grad(self, closure=None):
         """Performs a single optimization step.
@@ -176,15 +130,8 @@ class DropoutSGD(Optimizer):
 
         return steps_dicts
 
-    # def full_reset_grad(self):
-    #     r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
-    #     for dic in self.param_group_dicts:
-    #         for key, group in dic.items():
-    #             for p in group['params']:
-    #                 p.grad = None
 
     def full_reset_grad(self):
-        # self.zero_grad()
         r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
         for group in self.param_groups:
             for p in group['params']:

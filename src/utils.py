@@ -7,6 +7,7 @@ def to_string(**kwargs):
 
 
 class Timer:
+    """Debug Timer Class"""
     def __init__(self, debugText="", print_funct: types.FunctionType = print):
         self.debugText = debugText
         self.print_funct = print_funct
