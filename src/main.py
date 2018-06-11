@@ -108,7 +108,7 @@ def main():
     # save_path = load_path + "_"+ datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    max_norm = 200
+    max_grad_norm = 200
     max_grad = 0.6
     weight_decay = 1e-2
     train_length = 25
@@ -120,7 +120,6 @@ def main():
 
     args, unparsed = config_conv.get_args()
     gpu = torch.device("cuda:0")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def create_cnn():
         with utils.Timer("CNN construct", lambda x: logger.debug(x)):
@@ -152,14 +151,11 @@ def main():
 
     if load_path:
         cnn.load(load_path)
+        learning_rate_scheduler.load_state_dict(torch.load(os.path.join(load_path, "learning_rate_scheduler")))
 
     criterion = nn.CrossEntropyLoss()
 
     dataset = data.image.Image(args)
-
-    num_batches = 1
-    total_loss = 0
-    total_acc = 0
 
     test_dataset_iter = iter(dataset.test)
 
@@ -196,7 +192,7 @@ def main():
                     # Train on Training set
                     avg_loss, avg_acc, num_batches, iter_ended = cnn_train(cnn, criterion, train_dataset_iter,
                                                                            train_length,
-                                                                           gpu, cnn_optimizer,
+                                                                           gpu, cnn_optimizer, max_grad_norm=max_grad_norm,
                                                                            current_model_parameters=current_model_parameters,
                                                                            backprop=True)
                     info = dict(time=datetime.datetime.now().isoformat(), type="train", epoch=epoch,
@@ -208,7 +204,7 @@ def main():
                     jsonfile.write(numpy_to_json(info) + '\n')
                     logger.debug(info)
 
-                    # Train on Testing set
+                    # Train dropout on Testing set
                     dropout_opt.zero_grad()
                     avg_loss, avg_acc, num_batches, test_iter_ended = cnn_train(cnn, criterion, test_dataset_iter,
                                                                                 train_length,
@@ -250,6 +246,8 @@ def main():
 
             # Save cnn
             cnn.save(save_path)
+            torch.save(learning_rate_scheduler.state_dict(), os.path.join(save_path, "learning_rate_scheduler"))
+
 
             # Train best dag again and test on full testing dataset
             cnn.set_dags(best_dags)
@@ -257,7 +255,7 @@ def main():
 
             train_dataset_iter = iter(dataset.train)
             avg_loss, avg_acc, _, _ = cnn_train(cnn, criterion, train_dataset_iter, train_length, gpu, cnn_optimizer,
-                                                current_model_parameters, max_grad_norm=max_grad, backprop=True)
+                                                current_model_parameters, max_grad_norm=max_grad_norm, backprop=True)
             del train_dataset_iter
             info = dict(time=datetime.datetime.now().isoformat(), type="train-again",
                         avg_loss=avg_loss, avg_acc=avg_acc, best_dag=best_dags)
