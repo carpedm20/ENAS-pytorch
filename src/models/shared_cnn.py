@@ -152,7 +152,7 @@ class CNN(torch.nn.Module):
 
         cells = [('normal', architecture.final_filter_size)]*architecture.num_repeat_normal
         current_filter_size = architecture.final_filter_size
-        for module in range(architecture.num_modules):
+        for module in range(architecture.num_modules-1):
             cells.append(('reducing', current_filter_size))
             current_filter_size //= 2
             cells.extend([('normal', current_filter_size)]*architecture.num_repeat_normal)
