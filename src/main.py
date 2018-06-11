@@ -108,9 +108,9 @@ def cnn_train(cnn, criterion, data_iter, max_batches, device, cnn_optimizer=None
 
 
 def main():
-    load_path = "./logs/new/2018-06-08_21-16-41"
-    save_path = load_path + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    load_path = None
+    # save_path = load_path + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    save_path = "./logs/new/" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     max_grad_norm = 200
     max_grad = 0.6
@@ -167,8 +167,6 @@ def main():
     test_dataset_iter = iter(dataset.test)
 
     with open(os.path.join(save_path, "logs.json"), 'w', newline='') as jsonfile:
-        # spamwriter = csv.writer(csvfile, delimiter=';', quotechar='|', quoting=csv.csv.QUOTE_NONNUMERIC)
-
         dropout_opt.zero_grad()
         for epoch in range(1000):
             best_dags = None
