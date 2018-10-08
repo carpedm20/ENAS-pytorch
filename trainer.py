@@ -294,7 +294,7 @@ class Trainer(object):
                                                     targets,
                                                     hidden,
                                                     dags)
-            hidden = utils.detach(hidden)
+            hidden.detach_()
             raw_total_loss += loss.data
 
             loss += _apply_penalties(extra_out, self.args)
@@ -483,7 +483,7 @@ class Trainer(object):
                                             is_train=False)
             output_flat = output.view(-1, self.dataset.num_tokens)
             total_loss += len(inputs) * self.ce(output_flat, targets).data
-            hidden = utils.detach(hidden)
+            hidden.detach_()
             ppl = math.exp(utils.to_item(total_loss) / (count + 1) / self.max_length)
 
         val_loss = utils.to_item(total_loss) / len(data)
