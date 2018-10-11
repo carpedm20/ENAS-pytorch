@@ -325,15 +325,12 @@ class Trainer(object):
             self.shared_step += 1
             train_idx += self.max_length
 
-    def get_reward(self, dag, entropies, hidden, valid_idx=None):
+    def get_reward(self, dag, entropies, hidden, valid_idx=0):
         """Computes the perplexity of a single sampled model on a minibatch of
         validation data.
         """
         if not isinstance(entropies, np.ndarray):
             entropies = entropies.data.cpu().numpy()
-
-        if valid_idx:
-            valid_idx = 0
 
         inputs, targets = self.get_batch(self.valid_data,
                                          valid_idx,
