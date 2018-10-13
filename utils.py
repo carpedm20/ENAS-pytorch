@@ -59,7 +59,7 @@ def add_node(graph, node_id, label, shape='box', style='filled'):
             shape=shape, style=style,
     )
 
-def draw_network(dag, path):
+def draw_network(dag, path, score=None):
     makedirs(os.path.dirname(path))
     graph = pgv.AGraph(directed=True, strict=True,
                        fontname='Helvetica', arrowtype='open') # not work?
@@ -70,6 +70,10 @@ def draw_network(dag, path):
         add_node(graph, -1, 'x[t]')
     if -2 in dag:
         add_node(graph, -2, 'h[t-1]')
+
+    if score:
+        #add reward/ppl into a non-connected node:
+        add_node(graph, 42, str(score)) 
 
     add_node(graph, 0, dag[-1][0].name)
 

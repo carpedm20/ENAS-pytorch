@@ -55,7 +55,7 @@ def _construct_dags(prev_nodes, activations, func_names, num_blocks):
 
         leaf_nodes = set(range(num_blocks)) - dag.keys()
 
-        # merge with avg
+        # merge with avg all leaf nodes
         for idx in leaf_nodes:
             dag[idx] = [Node(num_blocks, 'avg')]
 
@@ -83,7 +83,7 @@ class Controller(torch.nn.Module):
     def __init__(self, args):
         torch.nn.Module.__init__(self)
         self.args = args
-
+        self.forward_evals = 0
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
             # for every even step,
@@ -101,6 +101,7 @@ class Controller(torch.nn.Module):
 
         self.encoder = torch.nn.Embedding(num_total_tokens,
                                           args.controller_hid)
+        #args.controller_hid = 100
         self.lstm = torch.nn.LSTMCell(args.controller_hid, args.controller_hid)
 
         # TODO(brendan): Perhaps these weights in the decoder should be
@@ -141,6 +142,7 @@ class Controller(torch.nn.Module):
         else:
             embed = inputs
 
+        self.forward_evals += 1
         hx, cx = self.lstm(embed, hidden)
         logits = self.decoders[block_idx](hx)
 
@@ -184,7 +186,7 @@ class Controller(torch.nn.Module):
             entropy = -(log_prob * probs).sum(1, keepdim=False)
 
             action = probs.multinomial(num_samples=1).data
-            selected_log_prob = log_prob.gather(
+            selected_log_prob = log_prob.gather        (
                 1, utils.get_variable(action, requires_grad=False))
 
             # TODO(brendan): why the [:, 0] here? Should it be .squeeze(), or

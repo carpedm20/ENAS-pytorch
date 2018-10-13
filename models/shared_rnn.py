@@ -138,6 +138,7 @@ class RNN(models.shared_base.SharedModel):
 
         self.args = args
         self.corpus = corpus
+        self.forward_eval = 0
 
         self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
         self.encoder = EmbeddingDropout(corpus.num_tokens,
@@ -288,6 +289,7 @@ class RNN(models.shared_base.SharedModel):
 
     def cell(self, x, h_prev, dag):
         """Computes a single pass through the discovered RNN cell."""
+        self.forward_evals += 1
         c = {}
         h = {}
         f = {}
