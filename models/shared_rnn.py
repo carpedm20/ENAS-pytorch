@@ -135,7 +135,7 @@ class RNN(models.shared_base.SharedModel):
     """Shared RNN model."""
     def __init__(self, args, corpus):
         models.shared_base.SharedModel.__init__(self)
-
+        self.forward_evals = 0
         self.args = args
         self.corpus = corpus
         self.forward_eval = 0

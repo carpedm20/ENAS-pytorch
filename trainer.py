@@ -698,11 +698,11 @@ class Trainer(object):
             map_location = None
 
         self.shared.load_state_dict(
-            torch.load(self.shared_path, map_location=map_location))
+            torch.load(self.shared_path, map_location=map_location),strict=False)
         logger.info(f'[*] LOADED: {self.shared_path}')
 
         self.controller.load_state_dict(
-            torch.load(self.controller_path, map_location=map_location))
+            torch.load(self.controller_path, map_location=map_location), strict=False)
         logger.info(f'[*] LOADED: {self.controller_path}')
 
     def _summarize_controller_train(self,

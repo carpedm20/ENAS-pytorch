@@ -36,6 +36,7 @@ def main(args):  # pylint:disable=redefined-outer-name
         assert args.load_path != "", ("`--load_path` should be given in "
                                       "`derive` mode")
         best_dag = trnr.derive()
+        logger.info(f'&&& derive: best_dag: {best_dag}')
 
     else:
         if not args.load_path:
