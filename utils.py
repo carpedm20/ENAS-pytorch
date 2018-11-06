@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 from collections import defaultdict
+import collections
 from datetime import datetime
 import os
 import json
@@ -156,6 +157,9 @@ def batchify(data, bsz, use_cuda):
 # ETC
 ##########################
 
+Node = collections.namedtuple('Node', ['id', 'name'])
+
+
 class keydefaultdict(defaultdict):
     def __missing__(self, key):
         if self.default_factory is None:
@@ -239,6 +243,18 @@ def save_args(args):
     with open(param_path, 'w') as fp:
         json.dump(args.__dict__, fp, indent=4, sort_keys=True)
 
+def save_dag(args, dag, name):
+    save_path = os.path.join(args.model_dir, name)
+    json.dump(dag, open(save_path, 'w'))
+
+def load_dag(args):
+    load_path = os.path.join(args.dag_path)
+    with open(load_path) as f:
+        dag = json.load(f)
+    dag = {int(k): [Node(el[0], el[1]) for el in v] for k, v in dag.items()}
+    save_dag(args, dag, "dag.json")
+    return dag          
+  
 def makedirs(path):
     if not os.path.exists(path):
         logger.info("[*] Make directories : {}".format(path))
