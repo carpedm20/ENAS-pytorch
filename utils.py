@@ -253,6 +253,7 @@ def load_dag(args):
         dag = json.load(f)
     dag = {int(k): [Node(el[0], el[1]) for el in v] for k, v in dag.items()}
     save_dag(args, dag, "dag.json")
+    draw_network(dag, os.path.join(args.model_dir, "dag.png"))
     return dag          
   
 def makedirs(path):
