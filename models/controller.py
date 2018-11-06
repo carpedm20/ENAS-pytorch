@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import utils
-from utils import None
+from utils import Node
 
 
 def _construct_dags(prev_nodes, activations, func_names, num_blocks):
