@@ -245,10 +245,12 @@ def save_args(args):
 
 def save_dag(args, dag, name):
     save_path = os.path.join(args.model_dir, name)
+    logger.info("[*] Save dag : {}".format(save_path))
     json.dump(dag, open(save_path, 'w'))
 
 def load_dag(args):
     load_path = os.path.join(args.dag_path)
+    logger.info("[*] Load dag : {}".format(load_path))
     with open(load_path) as f:
         dag = json.load(f)
     dag = {int(k): [Node(el[0], el[1]) for el in v] for k, v in dag.items()}
