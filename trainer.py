@@ -194,7 +194,7 @@ class Trainer(object):
         elif self.args.num_gpu > 1:
             raise NotImplementedError('`num_gpu > 1` is in progress')
 
-    def train(self):
+    def train(self, single=False):
         """Cycles through alternately training the shared parameters and the
         controller, as described in Section 2.2, Training ENAS and Deriving
         Architectures, of the paper.
@@ -206,21 +206,28 @@ class Trainer(object):
 
         - In the second phase, the controller's parameters are trained for 2000
           steps.
+          
+        Args:
+            single (bool): If True it won't train the controller and use the
+                           same dag instead of derive().
         """
+        dag = utils.load_dag(self.args) if single else None
+        
         if self.args.shared_initial_step > 0:
             self.train_shared(self.args.shared_initial_step)
             self.train_controller()
 
         for self.epoch in range(self.start_epoch, self.args.max_epoch):
             # 1. Training the shared parameters omega of the child models
-            self.train_shared()
+            self.train_shared(dag=dag)
 
             # 2. Training the controller parameters theta
-            self.train_controller()
+            if not single:
+                self.train_controller()
 
             if self.epoch % self.args.save_epoch == 0:
                 with _get_no_grad_ctx_mgr():
-                    best_dag = self.derive()
+                    best_dag = dag if dag else self.derive()
                     self.evaluate(self.eval_data,
                                   best_dag,
                                   'val_best',
@@ -250,12 +257,13 @@ class Trainer(object):
         assert len(dags) == 1, 'there are multiple `hidden` for multple `dags`'
         return loss, hidden, extra_out
 
-    def train_shared(self, max_step=None):
+    def train_shared(self, max_step=None, dag=None):
         """Train the language model for 400 steps of minibatches of 64
         examples.
 
         Args:
             max_step: Used to run extra training steps as a warm-up.
+            dag: If not None, is used instead of calling sample().
 
         BPTT is truncated at 35 timesteps.
 
@@ -285,7 +293,8 @@ class Trainer(object):
             if step > max_step:
                 break
 
-            dags = self.controller.sample(self.args.shared_num_sample)
+            dags = dag if dag else self.controller.sample(
+                self.args.shared_num_sample)
             inputs, targets = self.get_batch(self.train_data,
                                              train_idx,
                                              self.max_length)
