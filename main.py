@@ -36,12 +36,18 @@ def main(args):  # pylint:disable=redefined-outer-name
         assert args.load_path != "", ("`--load_path` should be given in "
                                       "`derive` mode")
         trnr.derive()
-    else:
+    elif args.mode == 'test':
         if not args.load_path:
             raise Exception("[!] You should specify `load_path` to load a "
                             "pretrained model")
         trnr.test()
-
+    elif args.mode == 'single':
+        if not args.dag_path:
+            raise Exception("[!] You should specify `dag_path` to load a dag")
+        utils.save_args(args)
+        trnr.train(single=True)
+    else:
+        raise Exception(f"[!] Mode not found: {args.mode}")
 
 if __name__ == "__main__":
     args, unparsed = config.get_args()

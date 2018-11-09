@@ -6,9 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import utils
-
-
-Node = collections.namedtuple('Node', ['id', 'name'])
+from utils import Node
 
 
 def _construct_dags(prev_nodes, activations, func_names, num_blocks):
