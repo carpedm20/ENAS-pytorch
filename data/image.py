@@ -19,7 +19,7 @@ class Image(object):
                 transforms.ToTensor(),
                 normalize,
             ])
-        elif args.datset == 'MNIST':
+        elif args.dataset == 'MNIST':
             Dataset = datasets.MNIST
         else:
             raise NotImplementedError(f'Unknown dataset: {args.dataset}')
