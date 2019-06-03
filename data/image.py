@@ -5,7 +5,7 @@ import torchvision.transforms as transforms
 
 class Image(object):
     def __init__(self, args):
-        if args.datset == 'cifar10':
+        if args.dataset == 'cifar10':
             Dataset = datasets.CIFAR10
 
             mean = [0.49139968, 0.48215827, 0.44653124]
