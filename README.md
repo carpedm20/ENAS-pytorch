@@ -12,7 +12,7 @@ PyTorch implementation of [Efficient Neural Architecture Search via Parameters S
 ## Prerequisites
 
 - Python 3.6+
-- [PyTorch](http://pytorch.org/)
+- [PyTorch==0.3.1](https://pytorch.org/get-started/previous-versions/)
 - tqdm, scipy, imageio, graphviz, tensorboardX
 
 ## Usage
