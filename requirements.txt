@@ -1,6 +1,10 @@
 ipdb
 tqdm
-scipy
+scipy==1.2.1
 imageio
 pygraphviz
+torch
+torchvision
 tensorboardX
+Pillow
+opencv-contrib-python
