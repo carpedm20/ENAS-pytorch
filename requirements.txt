@@ -1,6 +1,6 @@
 ipdb
 tqdm
-scipy==1.2.1
+scipy==1.10.0
 imageio
 pygraphviz
 torch
